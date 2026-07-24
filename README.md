@@ -8,7 +8,7 @@ If no video is configured, or the configured file does not exist, the app displa
 
 This is an app-level overlay, not a replacement for macOS LoginWindow, FileVault, Touch ID at the real system lock screen, password unlock, or the real system screen saver. A privileged user or someone with physical access may still bypass or quit apps. Keep normal macOS security enabled.
 
-macOS does not let a normal app fully disable every system-level gesture globally. This app now tries to capture all displays while locked, uses all-screen high-level overlay windows, and swallows local swipe/scroll/click events. That should reduce the four-finger Spaces reveal, but the only fully secure solution is still Apple’s lock screen.
+macOS does not let a normal app fully disable every system-level gesture globally. This app uses all-screen high-level overlay windows, AppKit locked presentation options, and local swipe/scroll/click swallowing. That reduces accidental reveal without blanking the display, but the only fully secure solution is still Apple’s lock screen.
 
 ## Build
 
@@ -46,12 +46,12 @@ Touch ID or your Mac password unlocks the app.
 - Press `T`, Return, or use the menu bar item to start authentication.
 - macOS decides whether to show Touch ID, password fallback, or both.
 - Clicks, drawing gestures, drags, swipes, and random shortcuts do not unlock.
-- The app creates one overlay window per detected display and attempts to capture all displays while locked.
+- The app creates one overlay window per detected display and keeps them frontmost at screen-saver level.
 - Emergency quit for prototype testing: press `Esc` five times or press `Command-Q`.
 
 ## Notes
 
 - Authentication uses Apple's `LocalAuthentication` framework with `.deviceOwnerAuthentication` so password fallback is allowed.
 - Gesture recognition was removed completely because clicking/drawing caused crashes on your machine.
-- Display capture is released on successful unlock or emergency quit.
+- Display capture was removed because it caused a completely black screen instead of rendering `H0Ver` or video.
 - Multi-monitor support is best-effort. The app recreates overlay windows when screen parameters change.

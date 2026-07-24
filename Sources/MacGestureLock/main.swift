@@ -32,7 +32,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var authenticationInProgress = false
     private var keepFrontTimer: Timer?
     private var eventMonitors: [Any] = []
-    private var displaysCaptured = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApplication.shared.setActivationPolicy(.accessory)
@@ -55,7 +54,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func lockFromMenu() { lock() }
     @objc private func authenticateFromMenu() { authenticateWithTouchID() }
     @objc private func quit() {
-        releaseDisplaysIfNeeded()
+        restorePresentationOptions()
         NSApplication.shared.terminate(nil)
     }
     @objc private func screensChanged() { if !windows.isEmpty { lock() } }
@@ -63,7 +62,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func lock() {
         config = Config.load()
         authenticationInProgress = false
-        captureDisplaysIfPossible()
+        applyLockedPresentationOptions()
         windows.forEach { ($0.contentView as? LockView)?.stopVideo(); $0.close() }
         windows = NSScreen.screens.map(makeWindow)
         startKeepFrontTimer()
@@ -74,7 +73,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let view = LockView(frame: screen.frame, videoURL: videoURL())
         view.onAuthenticate = { [weak self] in self?.authenticateWithTouchID() }
         view.onEmergencyQuit = { [weak self] in
-            self?.releaseDisplaysIfNeeded()
+            self?.restorePresentationOptions()
             NSApplication.shared.terminate(nil)
         }
 
@@ -107,19 +106,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    private func captureDisplaysIfPossible() {
-        guard !displaysCaptured else { return }
-        let error = CGCaptureAllDisplays()
-        displaysCaptured = (error == .success)
-        if !displaysCaptured {
-            setStatus("Display capture unavailable. Overlay fallback active.", color: .systemOrange)
-        }
+    private func applyLockedPresentationOptions() {
+        NSApplication.shared.presentationOptions = [
+            .hideDock,
+            .hideMenuBar,
+            .disableProcessSwitching,
+            .disableForceQuit,
+            .disableSessionTermination,
+            .disableHideApplication,
+            .disableMenuBarTransparency
+        ]
     }
 
-    private func releaseDisplaysIfNeeded() {
-        guard displaysCaptured else { return }
-        CGReleaseAllDisplays()
-        displaysCaptured = false
+    private func restorePresentationOptions() {
+        NSApplication.shared.presentationOptions = []
     }
 
     private func installEventMonitors() {
@@ -179,7 +179,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         keepFrontTimer = nil
         windows.forEach { ($0.contentView as? LockView)?.stopVideo(); $0.close() }
         windows = []
-        releaseDisplaysIfNeeded()
+        restorePresentationOptions()
     }
 }
 
