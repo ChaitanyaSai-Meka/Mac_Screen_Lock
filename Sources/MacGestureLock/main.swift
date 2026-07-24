@@ -18,13 +18,14 @@ struct Config {
 }
 
 @main
+@MainActor
 enum MacGestureLockMain {
+    private static let delegate = AppDelegate()
+
     static func main() {
         let app = NSApplication.shared
-        let delegate = AppDelegate()
         app.delegate = delegate
         app.run()
-        _ = delegate
     }
 }
 
@@ -37,7 +38,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var authenticationInProgress = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        NSApp.setActivationPolicy(.accessory)
+        NSApplication.shared.setActivationPolicy(.accessory)
         makeMenuBarItem()
         lock()
     }
@@ -54,7 +55,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func lockFromMenu() { lock() }
     @objc private func authenticateFromMenu() { authenticateWithTouchID() }
-    @objc private func quit() { NSApp.terminate(nil) }
+    @objc private func quit() { NSApplication.shared.terminate(nil) }
 
     private func lock() {
         config = Config.load()
@@ -69,7 +70,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self.handle(points: points, in: view)
             }
             view.onAuthenticate = { [weak self] in self?.authenticateWithTouchID() }
-            view.onEmergencyQuit = { NSApp.terminate(nil) }
+            view.onEmergencyQuit = { NSApplication.shared.terminate(nil) }
 
             let window = NSWindow(contentRect: screen.frame, styleMask: [.borderless], backing: .buffered, defer: false, screen: screen)
             window.level = .screenSaver
@@ -81,7 +82,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             window.makeKeyAndOrderFront(nil)
             return window
         }
-        NSApp.activate(ignoringOtherApps: true)
+        NSApplication.shared.activate(ignoringOtherApps: true)
     }
 
     private func videoURL() -> URL? {
@@ -112,7 +113,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         } else {
             progress = 0
-            view.setStatus("Gesture rejected. Draw the configured phrase only.", color: .systemRed)
+            view.setStatus("Gesture rejected. Draw \(wanted).", color: .systemRed)
             updatePrompt()
         }
     }
@@ -280,7 +281,22 @@ enum LetterRecognizer {
     static func recognize(points: [CGPoint]) -> Character? {
         let normalized = normalize(points)
         guard normalized.count >= 8 else { return nil }
+        if looksLikeL(normalized) { return "L" }
         return templates.min { score(normalized, normalize($0.value)) < score(normalized, normalize($1.value)) }?.key
+    }
+
+    private static func looksLikeL(_ points: [CGPoint]) -> Bool {
+        guard points.count >= 8 else { return false }
+        let first = points[0]
+        let last = points[points.count - 1]
+        let cornerIndex = points.indices.min { points[$0].y < points[$1].y } ?? (points.count / 2)
+        let corner = points[cornerIndex]
+        let verticalDrop = first.y - corner.y
+        let horizontalRun = last.x - corner.x
+        let endNearBottom = abs(last.y - corner.y) < 0.28
+        let startsLeft = abs(first.x - corner.x) < 0.32
+        let cornerNotAtEnds = cornerIndex > points.count / 5 && cornerIndex < points.count * 4 / 5
+        return verticalDrop > 0.45 && horizontalRun > 0.35 && endNearBottom && startsLeft && cornerNotAtEnds
     }
 
     private static func score(_ a: [CGPoint], _ b: [CGPoint]) -> CGFloat {
