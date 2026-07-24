@@ -3,17 +3,12 @@ import AVKit
 import LocalAuthentication
 
 struct Config {
-    let phrase: [Character]
     let videoPath: String?
 
     static func load() -> Config {
-        let phraseRaw = UserDefaults.standard.string(forKey: "UnlockPhrase")
-            ?? ProcessInfo.processInfo.environment["UNLOCK_PHRASE"]
-            ?? "L"
-        let letters = phraseRaw.uppercased().filter { $0.isLetter }
         let path = UserDefaults.standard.string(forKey: "ScreensaverVideo")
             ?? ProcessInfo.processInfo.environment["SCREENSAVER_VIDEO"]
-        return Config(phrase: Array(letters.isEmpty ? "L" : letters), videoPath: path)
+        return Config(videoPath: path)
     }
 }
 
@@ -34,12 +29,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var windows: [NSWindow] = []
     private var statusItem: NSStatusItem?
     private var config = Config.load()
-    private var progress = 0
     private var authenticationInProgress = false
+    private var keepFrontTimer: Timer?
+    private var eventMonitors: [Any] = []
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApplication.shared.setActivationPolicy(.accessory)
         makeMenuBarItem()
+        installEventMonitors()
+        NotificationCenter.default.addObserver(self, selector: #selector(screensChanged), name: NSApplication.didChangeScreenParametersNotification, object: nil)
         lock()
     }
 
@@ -56,33 +54,63 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func lockFromMenu() { lock() }
     @objc private func authenticateFromMenu() { authenticateWithTouchID() }
     @objc private func quit() { NSApplication.shared.terminate(nil) }
+    @objc private func screensChanged() { if !windows.isEmpty { lock() } }
 
     private func lock() {
         config = Config.load()
-        progress = 0
         authenticationInProgress = false
-        windows.forEach { $0.close() }
-        windows = NSScreen.screens.map { screen in
-            let view = LockView(frame: screen.frame, videoURL: videoURL())
-            view.expectedText = expectedText
-            view.onStroke = { [weak self, weak view] points in
-                guard let self, let view else { return }
-                self.handle(points: points, in: view)
-            }
-            view.onAuthenticate = { [weak self] in self?.authenticateWithTouchID() }
-            view.onEmergencyQuit = { NSApplication.shared.terminate(nil) }
-
-            let window = NSWindow(contentRect: screen.frame, styleMask: [.borderless], backing: .buffered, defer: false, screen: screen)
-            window.level = .screenSaver
-            window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
-            window.backgroundColor = .black
-            window.isOpaque = true
-            window.ignoresMouseEvents = false
-            window.contentView = view
-            window.makeKeyAndOrderFront(nil)
-            return window
-        }
+        windows.forEach { ($0.contentView as? LockView)?.stopVideo(); $0.close() }
+        windows = NSScreen.screens.map(makeWindow)
+        startKeepFrontTimer()
         NSApplication.shared.activate(ignoringOtherApps: true)
+    }
+
+    private func makeWindow(for screen: NSScreen) -> NSWindow {
+        let view = LockView(frame: screen.frame, videoURL: videoURL())
+        view.onAuthenticate = { [weak self] in self?.authenticateWithTouchID() }
+        view.onEmergencyQuit = { NSApplication.shared.terminate(nil) }
+
+        let window = NSWindow(contentRect: screen.frame, styleMask: [.borderless], backing: .buffered, defer: false, screen: screen)
+        window.level = .screenSaver
+        window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
+        window.backgroundColor = .black
+        window.isOpaque = true
+        window.ignoresMouseEvents = false
+        window.canHide = false
+        window.isReleasedWhenClosed = false
+        window.contentView = view
+        window.makeKeyAndOrderFront(nil)
+        return window
+    }
+
+    private func startKeepFrontTimer() {
+        keepFrontTimer?.invalidate()
+        keepFrontTimer = Timer.scheduledTimer(withTimeInterval: 0.35, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.reassertOverlay() }
+        }
+    }
+
+    private func reassertOverlay() {
+        guard !windows.isEmpty else { return }
+        for window in windows {
+            window.level = .screenSaver
+            window.orderFrontRegardless()
+            window.contentView?.needsDisplay = true
+        }
+    }
+
+    private func installEventMonitors() {
+        let swallowed: NSEvent.EventTypeMask = [.scrollWheel, .swipe, .magnify, .rotate, .smartMagnify, .gesture]
+        eventMonitors.append(NSEvent.addLocalMonitorForEvents(matching: swallowed) { [weak self] event in
+            guard let self, !self.windows.isEmpty else { return event }
+            self.reassertOverlay()
+            return nil
+        } as Any)
+        eventMonitors.append(NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .leftMouseDragged, .leftMouseUp, .rightMouseDown, .rightMouseDragged, .rightMouseUp, .otherMouseDown, .otherMouseDragged, .otherMouseUp]) { [weak self] event in
+            guard let self, !self.windows.isEmpty else { return event }
+            self.setStatus("Clicks and gestures are disabled. Use Touch ID.", color: .systemOrange)
+            return nil
+        } as Any)
     }
 
     private func videoURL() -> URL? {
@@ -90,32 +118,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let expanded = (path as NSString).expandingTildeInPath
         guard FileManager.default.fileExists(atPath: expanded) else { return nil }
         return URL(fileURLWithPath: expanded)
-    }
-
-    private var expectedText: String {
-        String(config.phrase.prefix(progress)) + "·" + String(config.phrase.dropFirst(progress))
-    }
-
-    private func updatePrompt() {
-        windows.compactMap { $0.contentView as? LockView }.forEach { $0.expectedText = expectedText }
-    }
-
-    private func handle(points: [CGPoint], in view: LockView) {
-        let wanted = config.phrase[progress]
-        let result = LetterRecognizer.recognize(points: points)
-        if result == wanted {
-            progress += 1
-            if progress == config.phrase.count {
-                unlock()
-            } else {
-                view.setStatus("Matched \(wanted). Keep drawing.", color: .systemGreen)
-                updatePrompt()
-            }
-        } else {
-            progress = 0
-            view.setStatus("Gesture rejected. Draw \(wanted).", color: .systemRed)
-            updatePrompt()
-        }
     }
 
     private func authenticateWithTouchID() {
@@ -128,7 +130,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         var error: NSError?
         guard context.canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, error: &error) else {
             authenticationInProgress = false
-            setStatus("Touch ID unavailable. Use the configured gesture phrase.", color: .systemOrange)
+            setStatus("Touch ID unavailable on this Mac.", color: .systemRed)
             return
         }
 
@@ -150,6 +152,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func unlock() {
+        keepFrontTimer?.invalidate()
+        keepFrontTimer = nil
         windows.forEach { ($0.contentView as? LockView)?.stopVideo(); $0.close() }
         windows = []
     }
@@ -157,13 +161,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
 @MainActor
 final class LockView: NSView {
-    var onStroke: (([CGPoint]) -> Void)?
     var onAuthenticate: (() -> Void)?
     var onEmergencyQuit: (() -> Void)?
-    var expectedText: String = "·L" { didSet { needsDisplay = true } }
 
-    private var points: [CGPoint] = []
-    private var status = "Draw the unlock phrase or use Touch ID"
+    private var status = "Press T or Return for Touch ID"
     private var statusColor = NSColor.white
     private var player: AVPlayer?
     private var playerLayer: AVPlayerLayer?
@@ -209,50 +210,22 @@ final class LockView: NSView {
             drawCentered("H0Ver", y: bounds.midY - 35, size: 96, color: .white)
         }
         drawOverlayPanel()
-
-        guard points.count > 1 else { return }
-        let path = NSBezierPath()
-        path.lineWidth = 7
-        path.lineCapStyle = .round
-        path.lineJoinStyle = .round
-        path.move(to: points[0])
-        points.dropFirst().forEach { path.line(to: $0) }
-        NSColor.systemCyan.setStroke()
-        path.stroke()
     }
 
     private func drawOverlayPanel() {
-        let panel = NSRect(x: bounds.midX - 350, y: 28, width: 700, height: 142)
-        NSColor.black.withAlphaComponent(0.60).setFill()
+        let panel = NSRect(x: bounds.midX - 350, y: 28, width: 700, height: 132)
+        NSColor.black.withAlphaComponent(0.65).setFill()
         NSBezierPath(roundedRect: panel, xRadius: 18, yRadius: 18).fill()
-        drawCentered("Unlock phrase: \(expectedText)", y: 122, size: 28, color: .systemCyan)
-        drawCentered(status, y: 88, size: 18, color: statusColor)
-        drawCentered("Only the correct phrase or Touch ID unlocks. Random swipes and shortcuts stay locked.", y: 62, size: 14, color: .lightGray)
-        drawCentered("Press T for Touch ID. Esc ×5 or ⌘Q quits for testing.", y: 42, size: 14, color: .lightGray)
+        drawCentered("Touch ID unlock", y: 108, size: 28, color: .systemCyan)
+        drawCentered(status, y: 76, size: 18, color: statusColor)
+        drawCentered("Clicks, drawing gestures, and swipes are disabled while locked.", y: 50, size: 14, color: .lightGray)
+        drawCentered("Esc ×5 or ⌘Q quits for testing.", y: 32, size: 14, color: .lightGray)
     }
 
     private func drawCentered(_ text: String, y: CGFloat, size: CGFloat, color: NSColor) {
         let attrs: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: size, weight: .semibold), .foregroundColor: color]
         let string = NSAttributedString(string: text, attributes: attrs)
         string.draw(at: CGPoint(x: bounds.midX - string.size().width / 2, y: y))
-    }
-
-    override func mouseDown(with event: NSEvent) {
-        points = [convert(event.locationInWindow, from: nil)]
-        needsDisplay = true
-    }
-
-    override func mouseDragged(with event: NSEvent) {
-        points.append(convert(event.locationInWindow, from: nil))
-        needsDisplay = true
-    }
-
-    override func mouseUp(with event: NSEvent) {
-        points.append(convert(event.locationInWindow, from: nil))
-        let stroke = points
-        points.removeAll()
-        needsDisplay = true
-        onStroke?(stroke)
     }
 
     override func keyDown(with event: NSEvent) {
@@ -274,80 +247,5 @@ final class LockView: NSView {
         status = text
         statusColor = color
         needsDisplay = true
-    }
-}
-
-enum LetterRecognizer {
-    static func recognize(points: [CGPoint]) -> Character? {
-        let normalized = normalize(points)
-        guard normalized.count >= 8 else { return nil }
-        if looksLikeL(normalized) { return "L" }
-        return templates.min { score(normalized, normalize($0.value)) < score(normalized, normalize($1.value)) }?.key
-    }
-
-    private static func looksLikeL(_ points: [CGPoint]) -> Bool {
-        guard points.count >= 8 else { return false }
-        let first = points[0]
-        let last = points[points.count - 1]
-        let cornerIndex = points.indices.min { points[$0].y < points[$1].y } ?? (points.count / 2)
-        let corner = points[cornerIndex]
-        let verticalDrop = first.y - corner.y
-        let horizontalRun = last.x - corner.x
-        let endNearBottom = abs(last.y - corner.y) < 0.28
-        let startsLeft = abs(first.x - corner.x) < 0.32
-        let cornerNotAtEnds = cornerIndex > points.count / 5 && cornerIndex < points.count * 4 / 5
-        return verticalDrop > 0.45 && horizontalRun > 0.35 && endNearBottom && startsLeft && cornerNotAtEnds
-    }
-
-    private static func score(_ a: [CGPoint], _ b: [CGPoint]) -> CGFloat {
-        guard !a.isEmpty, !b.isEmpty else { return .greatestFiniteMagnitude }
-        return zip(a, b).map { hypot($0.x - $1.x, $0.y - $1.y) }.reduce(0, +) / CGFloat(min(a.count, b.count))
-    }
-
-    private static func normalize(_ input: [CGPoint], count: Int = 64) -> [CGPoint] {
-        let sampled = resample(input, count: count)
-        guard let minX = sampled.map(\.x).min(), let maxX = sampled.map(\.x).max(), let minY = sampled.map(\.y).min(), let maxY = sampled.map(\.y).max() else { return [] }
-        let scale = max(maxX - minX, maxY - minY, 1)
-        return sampled.map { CGPoint(x: (($0.x - minX) / scale) - 0.5, y: (($0.y - minY) / scale) - 0.5) }
-    }
-
-    private static func resample(_ points: [CGPoint], count: Int) -> [CGPoint] {
-        guard points.count > 1 else { return points }
-        let distances = zip(points, points.dropFirst()).map { hypot($1.x - $0.x, $1.y - $0.y) }
-        let total = distances.reduce(0, +)
-        guard total > 0 else { return Array(repeating: points[0], count: count) }
-        return (0..<count).compactMap { i in
-            let target = total * CGFloat(i) / CGFloat(count - 1)
-            var covered: CGFloat = 0
-            for j in distances.indices {
-                if covered + distances[j] >= target {
-                    let t = (target - covered) / max(distances[j], 0.0001)
-                    return CGPoint(x: points[j].x + (points[j + 1].x - points[j].x) * t, y: points[j].y + (points[j + 1].y - points[j].y) * t)
-                }
-                covered += distances[j]
-            }
-            return points.last
-        }
-    }
-
-    private static let templates: [Character: [CGPoint]] = {
-        var t: [Character: [CGPoint]] = [:]
-        t["L"] = [p(0, 1), p(0, 0), p(0.8, 0)]
-        t["I"] = [p(0.5, 1), p(0.5, 0)]
-        t["V"] = [p(0, 1), p(0.5, 0), p(1, 1)]
-        t["Z"] = [p(0, 1), p(1, 1), p(0, 0), p(1, 0)]
-        t["M"] = [p(0, 0), p(0, 1), p(0.5, 0.45), p(1, 1), p(1, 0)]
-        t["N"] = [p(0, 0), p(0, 1), p(1, 0), p(1, 1)]
-        t["C"] = arc(40, 320)
-        t["O"] = arc(0, 360)
-        return t
-    }()
-
-    private static func p(_ x: CGFloat, _ y: CGFloat) -> CGPoint { CGPoint(x: x, y: y) }
-    private static func arc(_ start: Int, _ end: Int) -> [CGPoint] {
-        stride(from: start, through: end, by: 20).map { angle in
-            let radians = CGFloat(angle) * .pi / 180
-            return CGPoint(x: 0.5 + 0.5 * cos(radians), y: 0.5 + 0.5 * sin(radians))
-        }
     }
 }

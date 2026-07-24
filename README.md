@@ -1,12 +1,14 @@
 # Mac Gesture Lock
 
-A macOS prototype that opens into a full-screen custom video screensaver with audio, then unlocks with either the configured drawn-letter gesture phrase or Touch ID.
+A macOS prototype that opens into a full-screen custom video screensaver with audio, then unlocks with Touch ID.
 
 If no video is configured, or the configured file does not exist, the app displays a black fallback screen with `H0Ver`.
 
 ## Important security limitation
 
 This is an app-level overlay, not a replacement for macOS LoginWindow, FileVault, Touch ID at the real system lock screen, password unlock, or the real system screen saver. A privileged user or someone with physical access may still bypass or quit apps. Keep normal macOS security enabled.
+
+macOS does not let a normal app fully disable system-level gestures like Mission Control or Spaces swipes globally. This app uses all-screen, all-Spaces, high-level overlay windows and swallows local swipe/scroll/click events while locked to reduce accidental reveal, but the real secure solution is still the built-in macOS lock screen.
 
 ## Build
 
@@ -21,8 +23,6 @@ swift run mac-gesture-lock
 ```
 
 The command keeps running while the overlay is active. Unlock it or use the emergency quit shortcut to return to the shell.
-
-Default unlock phrase is `L`.
 
 ## Run with a custom video screensaver and audio
 
@@ -39,41 +39,17 @@ defaults write MacGestureLock ScreensaverVideo -string "/Users/you/Movies/screen
 swift run mac-gesture-lock
 ```
 
-## Configure gesture unlock letters
-
-Supported prototype letters are `L I V Z C O M N`.
-
-```bash
-UNLOCK_PHRASE=LO swift run mac-gesture-lock
-```
-
-or persist it:
-
-```bash
-defaults write MacGestureLock UnlockPhrase -string "LO"
-```
-
 ## Unlocking
 
-There are exactly two intended unlock paths:
+Touch ID is the only unlock path.
 
-1. Draw the configured letter phrase one letter at a time on the trackpad or mouse.
-2. Press `T`, Return, or use the menu bar item to start Touch ID, then authenticate successfully.
-
-Random swipes, unrelated gestures, and normal keyboard shortcuts do not unlock the app. A swipe is treated only as a candidate drawn letter and must match the configured phrase in sequence.
-
-## Use
-
-1. Open the app. It creates full-screen overlay windows on all detected screens.
-2. If a valid custom video path is set, the video loops full-screen and plays audio.
-3. If not, the screen displays `H0Ver`.
-4. Draw the configured phrase or authenticate with Touch ID to unlock.
-5. Use the menu bar `H0Ver` item to lock again.
-6. Emergency quit for prototype testing: press `Esc` five times or press `Command-Q`.
+- Press `T`, Return, or use the menu bar item to start Touch ID.
+- Clicks, drawing gestures, drags, swipes, and random shortcuts do not unlock.
+- The app creates one overlay window per detected display and keeps them at screen-saver level across Spaces.
+- Emergency quit for prototype testing: press `Esc` five times or press `Command-Q`.
 
 ## Notes
 
 - Touch ID uses Apple's `LocalAuthentication` framework with the biometric-only policy.
-- Gesture recognition uses simple normalized stroke templates. It rejects unrecognized swipes by resetting progress.
-- Common keys and shortcuts are consumed by the overlay while locked. They do not dismiss it.
-- Multi-monitor support is best-effort. The app creates one high-level overlay window per detected screen.
+- Gesture recognition was removed completely because clicking/drawing caused crashes on your machine.
+- Multi-monitor support is best-effort. The app recreates overlay windows when screen parameters change.
