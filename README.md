@@ -1,6 +1,6 @@
 # Mac Gesture Lock
 
-A macOS prototype that opens into a full-screen custom video screensaver with audio, then unlocks with Touch ID.
+A macOS prototype that opens into a full-screen custom video screensaver with audio, then unlocks with Touch ID or your Mac password.
 
 If no video is configured, or the configured file does not exist, the app displays a black fallback screen with `H0Ver`.
 
@@ -8,7 +8,7 @@ If no video is configured, or the configured file does not exist, the app displa
 
 This is an app-level overlay, not a replacement for macOS LoginWindow, FileVault, Touch ID at the real system lock screen, password unlock, or the real system screen saver. A privileged user or someone with physical access may still bypass or quit apps. Keep normal macOS security enabled.
 
-macOS does not let a normal app fully disable system-level gestures like Mission Control or Spaces swipes globally. This app uses all-screen, all-Spaces, high-level overlay windows and swallows local swipe/scroll/click events while locked to reduce accidental reveal, but the real secure solution is still the built-in macOS lock screen.
+macOS does not let a normal app fully disable every system-level gesture globally. This app now tries to capture all displays while locked, uses all-screen high-level overlay windows, and swallows local swipe/scroll/click events. That should reduce the four-finger Spaces reveal, but the only fully secure solution is still Apple’s lock screen.
 
 ## Build
 
@@ -41,15 +41,17 @@ swift run mac-gesture-lock
 
 ## Unlocking
 
-Touch ID is the only unlock path.
+Touch ID or your Mac password unlocks the app.
 
-- Press `T`, Return, or use the menu bar item to start Touch ID.
+- Press `T`, Return, or use the menu bar item to start authentication.
+- macOS decides whether to show Touch ID, password fallback, or both.
 - Clicks, drawing gestures, drags, swipes, and random shortcuts do not unlock.
-- The app creates one overlay window per detected display and keeps them at screen-saver level across Spaces.
+- The app creates one overlay window per detected display and attempts to capture all displays while locked.
 - Emergency quit for prototype testing: press `Esc` five times or press `Command-Q`.
 
 ## Notes
 
-- Touch ID uses Apple's `LocalAuthentication` framework with the biometric-only policy.
+- Authentication uses Apple's `LocalAuthentication` framework with `.deviceOwnerAuthentication` so password fallback is allowed.
 - Gesture recognition was removed completely because clicking/drawing caused crashes on your machine.
+- Display capture is released on successful unlock or emergency quit.
 - Multi-monitor support is best-effort. The app recreates overlay windows when screen parameters change.

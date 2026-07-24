@@ -32,6 +32,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var authenticationInProgress = false
     private var keepFrontTimer: Timer?
     private var eventMonitors: [Any] = []
+    private var displaysCaptured = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApplication.shared.setActivationPolicy(.accessory)
@@ -53,12 +54,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func lockFromMenu() { lock() }
     @objc private func authenticateFromMenu() { authenticateWithTouchID() }
-    @objc private func quit() { NSApplication.shared.terminate(nil) }
+    @objc private func quit() {
+        releaseDisplaysIfNeeded()
+        NSApplication.shared.terminate(nil)
+    }
     @objc private func screensChanged() { if !windows.isEmpty { lock() } }
 
     private func lock() {
         config = Config.load()
         authenticationInProgress = false
+        captureDisplaysIfPossible()
         windows.forEach { ($0.contentView as? LockView)?.stopVideo(); $0.close() }
         windows = NSScreen.screens.map(makeWindow)
         startKeepFrontTimer()
@@ -68,7 +73,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func makeWindow(for screen: NSScreen) -> NSWindow {
         let view = LockView(frame: screen.frame, videoURL: videoURL())
         view.onAuthenticate = { [weak self] in self?.authenticateWithTouchID() }
-        view.onEmergencyQuit = { NSApplication.shared.terminate(nil) }
+        view.onEmergencyQuit = { [weak self] in
+            self?.releaseDisplaysIfNeeded()
+            NSApplication.shared.terminate(nil)
+        }
 
         let window = NSWindow(contentRect: screen.frame, styleMask: [.borderless], backing: .buffered, defer: false, screen: screen)
         window.level = .screenSaver
@@ -99,6 +107,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    private func captureDisplaysIfPossible() {
+        guard !displaysCaptured else { return }
+        let error = CGCaptureAllDisplays()
+        displaysCaptured = (error == .success)
+        if !displaysCaptured {
+            setStatus("Display capture unavailable. Overlay fallback active.", color: .systemOrange)
+        }
+    }
+
+    private func releaseDisplaysIfNeeded() {
+        guard displaysCaptured else { return }
+        CGReleaseAllDisplays()
+        displaysCaptured = false
+    }
+
     private func installEventMonitors() {
         let swallowed: NSEvent.EventTypeMask = [.scrollWheel, .swipe, .magnify, .rotate, .smartMagnify, .gesture]
         eventMonitors.append(NSEvent.addLocalMonitorForEvents(matching: swallowed) { [weak self] event in
@@ -123,18 +146,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func authenticateWithTouchID() {
         guard !windows.isEmpty, !authenticationInProgress else { return }
         authenticationInProgress = true
-        setStatus("Touch ID required to unlock", color: .systemCyan)
+        setStatus("Use Touch ID or Mac password to unlock", color: .systemCyan)
 
         let context = LAContext()
         context.localizedCancelTitle = "Stay Locked"
         var error: NSError?
-        guard context.canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, error: &error) else {
+        guard context.canEvaluatePolicy(.deviceOwnerAuthentication, error: &error) else {
             authenticationInProgress = false
-            setStatus("Touch ID unavailable on this Mac.", color: .systemRed)
+            setStatus("Mac authentication unavailable.", color: .systemRed)
             return
         }
 
-        context.evaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, localizedReason: "Unlock H0Ver screen") { [weak self] success, authError in
+        context.evaluatePolicy(.deviceOwnerAuthentication, localizedReason: "Unlock H0Ver screen") { [weak self] success, authError in
             Task { @MainActor in
                 guard let self else { return }
                 self.authenticationInProgress = false
@@ -156,6 +179,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         keepFrontTimer = nil
         windows.forEach { ($0.contentView as? LockView)?.stopVideo(); $0.close() }
         windows = []
+        releaseDisplaysIfNeeded()
     }
 }
 
@@ -164,7 +188,7 @@ final class LockView: NSView {
     var onAuthenticate: (() -> Void)?
     var onEmergencyQuit: (() -> Void)?
 
-    private var status = "Press T or Return for Touch ID"
+    private var status = "Press T or Return for Touch ID or password"
     private var statusColor = NSColor.white
     private var player: AVPlayer?
     private var playerLayer: AVPlayerLayer?
@@ -216,7 +240,7 @@ final class LockView: NSView {
         let panel = NSRect(x: bounds.midX - 350, y: 28, width: 700, height: 132)
         NSColor.black.withAlphaComponent(0.65).setFill()
         NSBezierPath(roundedRect: panel, xRadius: 18, yRadius: 18).fill()
-        drawCentered("Touch ID unlock", y: 108, size: 28, color: .systemCyan)
+        drawCentered("Touch ID or password unlock", y: 108, size: 28, color: .systemCyan)
         drawCentered(status, y: 76, size: 18, color: statusColor)
         drawCentered("Clicks, drawing gestures, and swipes are disabled while locked.", y: 50, size: 14, color: .lightGray)
         drawCentered("Esc ×5 or ⌘Q quits for testing.", y: 32, size: 14, color: .lightGray)
