@@ -20,6 +20,8 @@ swift build
 swift run mac-gesture-lock
 ```
 
+The command keeps running while the overlay is active. Unlock it or use the emergency quit shortcut to return to the shell.
+
 Default unlock phrase is `L`.
 
 ## Run with a custom video screensaver and audio
