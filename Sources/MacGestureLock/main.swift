@@ -4,11 +4,15 @@ import LocalAuthentication
 
 struct Config {
     let videoPath: String?
+    let appPassword: String
 
     static func load() -> Config {
         let path = UserDefaults.standard.string(forKey: "ScreensaverVideo")
             ?? ProcessInfo.processInfo.environment["SCREENSAVER_VIDEO"]
-        return Config(videoPath: path)
+        let password = UserDefaults.standard.string(forKey: "AppPassword")
+            ?? ProcessInfo.processInfo.environment["LOCK_PASSWORD"]
+            ?? "hover"
+        return Config(videoPath: path, appPassword: password)
     }
 }
 
@@ -72,6 +76,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func makeWindow(for screen: NSScreen) -> NSWindow {
         let view = LockView(frame: screen.frame, videoURL: videoURL())
         view.onAuthenticate = { [weak self] in self?.authenticateWithTouchID() }
+        view.onPasswordSubmit = { [weak self] password in self?.validate(password: password) }
         view.onEmergencyQuit = { [weak self] in
             self?.restorePresentationOptions()
             NSApplication.shared.terminate(nil)
@@ -131,7 +136,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         } as Any)
         eventMonitors.append(NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .leftMouseDragged, .leftMouseUp, .rightMouseDown, .rightMouseDragged, .rightMouseUp, .otherMouseDown, .otherMouseDragged, .otherMouseUp]) { [weak self] event in
             guard let self, !self.windows.isEmpty else { return event }
-            self.setStatus("Clicks and gestures are disabled. Use Touch ID.", color: .systemOrange)
+            self.setStatus("Type password and press Return, or press T for Touch ID.", color: .systemOrange)
             return nil
         } as Any)
     }
@@ -174,6 +179,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         windows.compactMap { $0.contentView as? LockView }.forEach { $0.setStatus(text, color: color) }
     }
 
+    private func validate(password: String) {
+        guard !windows.isEmpty else { return }
+        if password == config.appPassword {
+            unlock()
+        } else {
+            windows.compactMap { $0.contentView as? LockView }.forEach { $0.clearPassword() }
+            setStatus("Wrong password. Try again.", color: .systemRed)
+        }
+    }
+
     private func unlock() {
         keepFrontTimer?.invalidate()
         keepFrontTimer = nil
@@ -186,10 +201,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 @MainActor
 final class LockView: NSView {
     var onAuthenticate: (() -> Void)?
+    var onPasswordSubmit: ((String) -> Void)?
     var onEmergencyQuit: (() -> Void)?
 
-    private var status = "Press T or Return for Touch ID or password"
+    private var status = "Type password, press Return, or press T for Touch ID"
     private var statusColor = NSColor.white
+    private var passwordBuffer = ""
     private var player: AVPlayer?
     private var playerLayer: AVPlayerLayer?
     private var hasVideo = false
@@ -237,13 +254,24 @@ final class LockView: NSView {
     }
 
     private func drawOverlayPanel() {
-        let panel = NSRect(x: bounds.midX - 350, y: 28, width: 700, height: 132)
+        let panel = NSRect(x: bounds.midX - 370, y: 28, width: 740, height: 162)
         NSColor.black.withAlphaComponent(0.65).setFill()
         NSBezierPath(roundedRect: panel, xRadius: 18, yRadius: 18).fill()
-        drawCentered("Touch ID or password unlock", y: 108, size: 28, color: .systemCyan)
-        drawCentered(status, y: 76, size: 18, color: statusColor)
-        drawCentered("Clicks, drawing gestures, and swipes are disabled while locked.", y: 50, size: 14, color: .lightGray)
-        drawCentered("Esc ×5 or ⌘Q quits for testing.", y: 32, size: 14, color: .lightGray)
+        drawCentered("Password or Touch ID unlock", y: 138, size: 28, color: .systemCyan)
+        drawPasswordField(y: 98)
+        drawCentered(status, y: 72, size: 17, color: statusColor)
+        drawCentered("Type password directly. Press T for Touch ID. Clicks, gestures, and swipes are disabled.", y: 48, size: 14, color: .lightGray)
+        drawCentered("Esc ×5 or ⌘Q quits for testing.", y: 30, size: 14, color: .lightGray)
+    }
+
+    private func drawPasswordField(y: CGFloat) {
+        let field = NSRect(x: bounds.midX - 170, y: y - 8, width: 340, height: 34)
+        NSColor.white.withAlphaComponent(0.16).setFill()
+        NSBezierPath(roundedRect: field, xRadius: 8, yRadius: 8).fill()
+        NSColor.white.withAlphaComponent(0.55).setStroke()
+        NSBezierPath(roundedRect: field, xRadius: 8, yRadius: 8).stroke()
+        let bullets = passwordBuffer.isEmpty ? "Password" : String(repeating: "•", count: passwordBuffer.count)
+        drawCentered(bullets, y: y, size: 18, color: passwordBuffer.isEmpty ? .lightGray : .white)
     }
 
     private func drawCentered(_ text: String, y: CGFloat, size: CGFloat, color: NSColor) {
@@ -256,12 +284,24 @@ final class LockView: NSView {
         let key = event.charactersIgnoringModifiers?.lowercased()
         if event.modifierFlags.contains(.command), key == "q" {
             onEmergencyQuit?()
-        } else if key == "t" || event.keyCode == 36 || event.keyCode == 76 {
+        } else if key == "t" && passwordBuffer.isEmpty {
             onAuthenticate?()
+        } else if event.keyCode == 36 || event.keyCode == 76 {
+            if passwordBuffer.isEmpty {
+                onAuthenticate?()
+            } else {
+                onPasswordSubmit?(passwordBuffer)
+            }
+        } else if event.keyCode == 51 {
+            if !passwordBuffer.isEmpty { passwordBuffer.removeLast() }
+            setStatus("Type password, press Return, or press T for Touch ID", color: .white)
         } else if event.keyCode == 53 {
             escapeCount += 1
             setStatus("Emergency quit: press Esc \(max(0, 5 - escapeCount)) more times", color: .systemOrange)
             if escapeCount >= 5 { onEmergencyQuit?() }
+        } else if let chars = event.characters, !chars.isEmpty, !event.modifierFlags.contains(.command), !event.modifierFlags.contains(.control), !event.modifierFlags.contains(.option) {
+            passwordBuffer.append(contentsOf: chars)
+            setStatus("Press Return to unlock, or Backspace to edit.", color: .white)
         } else {
             setStatus("Shortcut ignored. Still locked.", color: .systemOrange)
         }
@@ -270,6 +310,11 @@ final class LockView: NSView {
     func setStatus(_ text: String, color: NSColor) {
         status = text
         statusColor = color
+        needsDisplay = true
+    }
+
+    func clearPassword() {
+        passwordBuffer = ""
         needsDisplay = true
     }
 }
