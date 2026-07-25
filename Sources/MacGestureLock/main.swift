@@ -2,19 +2,69 @@ import AppKit
 import AVKit
 import LocalAuthentication
 
+// MARK: - Configuration
+
 struct Config {
     let videoPath: String?
     let appPassword: String
 
+    /// Load config with priority: .env file → UserDefaults → environment variables → defaults
     static func load() -> Config {
-        let path = UserDefaults.standard.string(forKey: "ScreensaverVideo")
+        let env = loadDotEnv()
+        let path = env["VIDEO_PATH"]
+            ?? UserDefaults.standard.string(forKey: "ScreensaverVideo")
             ?? ProcessInfo.processInfo.environment["SCREENSAVER_VIDEO"]
-        let password = UserDefaults.standard.string(forKey: "AppPassword")
+        let password = env["LOCK_PASSWORD"]
+            ?? UserDefaults.standard.string(forKey: "AppPassword")
             ?? ProcessInfo.processInfo.environment["LOCK_PASSWORD"]
             ?? "hover"
         return Config(videoPath: path, appPassword: password)
     }
+
+    /// Parse .env file from the executable's directory or common locations
+    private static func loadDotEnv() -> [String: String] {
+        let candidates = [
+            // Next to the executable
+            (ProcessInfo.processInfo.arguments.first.map { ($0 as NSString).deletingLastPathComponent } ?? ".") + "/.env",
+            // Project root (when running from .build/debug/)
+            (ProcessInfo.processInfo.arguments.first.map {
+                let dir = ($0 as NSString).deletingLastPathComponent
+                // Walk up from .build/debug/ to project root
+                return (dir as NSString).appendingPathComponent("../../.env")
+            } ?? ""),
+            // Current working directory
+            FileManager.default.currentDirectoryPath + "/.env"
+        ]
+
+        for candidate in candidates {
+            let resolved = (candidate as NSString).standardizingPath
+            guard FileManager.default.fileExists(atPath: resolved),
+                  let content = try? String(contentsOfFile: resolved, encoding: .utf8)
+            else { continue }
+
+            var result: [String: String] = [:]
+            for line in content.components(separatedBy: .newlines) {
+                let trimmed = line.trimmingCharacters(in: .whitespaces)
+                guard !trimmed.isEmpty, !trimmed.hasPrefix("#") else { continue }
+                let parts = trimmed.split(separator: "=", maxSplits: 1)
+                guard parts.count == 2 else { continue }
+                let key = parts[0].trimmingCharacters(in: .whitespaces)
+                var value = parts[1].trimmingCharacters(in: .whitespaces)
+                // Strip surrounding quotes
+                if (value.hasPrefix("\"") && value.hasSuffix("\"")) || (value.hasPrefix("'") && value.hasSuffix("'")) {
+                    value = String(value.dropFirst().dropLast())
+                }
+                if !value.isEmpty {
+                    result[key] = value
+                }
+            }
+            return result
+        }
+        return [:]
+    }
 }
+
+// MARK: - App Entry Point
 
 @main
 @MainActor
@@ -27,6 +77,8 @@ enum MacGestureLockMain {
         app.run()
     }
 }
+
+// MARK: - App Delegate
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
@@ -71,6 +123,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         windows = NSScreen.screens.map(makeWindow)
         startKeepFrontTimer()
         NSApplication.shared.activate(ignoringOtherApps: true)
+        reassertFirstResponder()
     }
 
     private func makeWindow(for screen: NSScreen) -> NSWindow {
@@ -82,7 +135,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             NSApplication.shared.terminate(nil)
         }
 
-        let window = NSWindow(contentRect: screen.frame, styleMask: [.borderless], backing: .buffered, defer: false, screen: screen)
+        let window = KeyableWindow(contentRect: screen.frame, styleMask: [.borderless], backing: .buffered, defer: false, screen: screen)
         window.level = .screenSaver
         window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
         window.backgroundColor = .black
@@ -108,6 +161,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             window.level = .screenSaver
             window.orderFrontRegardless()
             window.contentView?.needsDisplay = true
+        }
+        reassertFirstResponder()
+    }
+
+    private func reassertFirstResponder() {
+        guard let keyWindow = windows.first(where: { $0.isKeyWindow }) ?? windows.first else { return }
+        if let lockView = keyWindow.contentView as? LockView {
+            if keyWindow.firstResponder !== lockView {
+                keyWindow.makeFirstResponder(lockView)
+            }
         }
     }
 
@@ -136,7 +199,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         } as Any)
         eventMonitors.append(NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .leftMouseDragged, .leftMouseUp, .rightMouseDown, .rightMouseDragged, .rightMouseUp, .otherMouseDown, .otherMouseDragged, .otherMouseUp]) { [weak self] event in
             guard let self, !self.windows.isEmpty else { return event }
-            self.setStatus("Type password and press Return, or press T for Touch ID.", color: .systemOrange)
+            self.setStatus("Type password and press Return ⏎", color: .white)
             return nil
         } as Any)
     }
@@ -151,25 +214,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func authenticateWithTouchID() {
         guard !windows.isEmpty, !authenticationInProgress else { return }
         authenticationInProgress = true
-        setStatus("Use Touch ID or Mac password to unlock", color: .systemCyan)
+        setStatus("Waiting for Touch ID…", color: NSColor.systemCyan)
 
         let context = LAContext()
         context.localizedCancelTitle = "Stay Locked"
+        context.localizedFallbackTitle = "Enter Mac Password"
         var error: NSError?
         guard context.canEvaluatePolicy(.deviceOwnerAuthentication, error: &error) else {
             authenticationInProgress = false
-            setStatus("Mac authentication unavailable.", color: .systemRed)
+            setStatus("Biometrics unavailable: \(error?.localizedDescription ?? "unknown")", color: NSColor.systemRed)
+            reassertFirstResponder()
             return
         }
 
         context.evaluatePolicy(.deviceOwnerAuthentication, localizedReason: "Unlock H0Ver screen") { [weak self] success, authError in
-            Task { @MainActor in
+            DispatchQueue.main.async {
                 guard let self else { return }
                 self.authenticationInProgress = false
                 if success {
                     self.unlock()
                 } else {
-                    self.setStatus(authError?.localizedDescription ?? "Touch ID failed. Still locked.", color: .systemOrange)
+                    self.setStatus(authError?.localizedDescription ?? "Authentication cancelled.", color: NSColor.systemOrange)
+                    self.reassertFirstResponder()
+                    self.reassertOverlay()
                 }
             }
         }
@@ -184,8 +251,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if password == config.appPassword {
             unlock()
         } else {
-            windows.compactMap { $0.contentView as? LockView }.forEach { $0.clearPassword() }
-            setStatus("Wrong password. Try again.", color: .systemRed)
+            windows.compactMap { $0.contentView as? LockView }.forEach { $0.shakeAndClear() }
+            setStatus("Incorrect password", color: NSColor.systemRed)
         }
     }
 
@@ -198,23 +265,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 }
 
+// MARK: - KeyableWindow
+
+/// Borderless windows return false for canBecomeKey/canBecomeMain by default,
+/// which prevents them from receiving keyboard events.
+@MainActor
+final class KeyableWindow: NSWindow {
+    override var canBecomeKey: Bool { true }
+    override var canBecomeMain: Bool { true }
+}
+
+// MARK: - LockView
+
 @MainActor
 final class LockView: NSView {
     var onAuthenticate: (() -> Void)?
     var onPasswordSubmit: ((String) -> Void)?
     var onEmergencyQuit: (() -> Void)?
 
-    private var status = "Type password, press Return, or press T for Touch ID"
-    private var statusColor = NSColor.white
-    private var passwordBuffer = ""
     private var player: AVPlayer?
     private var playerLayer: AVPlayerLayer?
     private var hasVideo = false
-    private var escapeCount = 0
+    private let overlayView: OverlayView
 
     init(frame frameRect: NSRect, videoURL: URL?) {
+        overlayView = OverlayView(frame: NSRect(origin: .zero, size: frameRect.size))
         super.init(frame: frameRect)
         wantsLayer = true
+
         if let videoURL {
             let player = AVPlayer(url: videoURL)
             player.isMuted = false
@@ -231,6 +309,10 @@ final class LockView: NSView {
             }
             player.play()
         }
+
+        overlayView.autoresizingMask = [.width, .height]
+        overlayView.hasVideo = hasVideo
+        addSubview(overlayView)
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
@@ -245,76 +327,185 @@ final class LockView: NSView {
     func stopVideo() { player?.pause() }
 
     override func draw(_ dirtyRect: NSRect) {
-        if !hasVideo {
-            NSColor.black.setFill()
-            bounds.fill()
-            drawCentered("H0Ver", y: bounds.midY - 35, size: 96, color: .white)
-        }
-        drawOverlayPanel()
-    }
-
-    private func drawOverlayPanel() {
-        let panel = NSRect(x: bounds.midX - 370, y: 28, width: 740, height: 162)
-        NSColor.black.withAlphaComponent(0.65).setFill()
-        NSBezierPath(roundedRect: panel, xRadius: 18, yRadius: 18).fill()
-        drawCentered("Password or Touch ID unlock", y: 138, size: 28, color: .systemCyan)
-        drawPasswordField(y: 98)
-        drawCentered(status, y: 72, size: 17, color: statusColor)
-        drawCentered("Type password directly. Press T for Touch ID. Clicks, gestures, and swipes are disabled.", y: 48, size: 14, color: .lightGray)
-        drawCentered("Esc ×5 or ⌘Q quits for testing.", y: 30, size: 14, color: .lightGray)
-    }
-
-    private func drawPasswordField(y: CGFloat) {
-        let field = NSRect(x: bounds.midX - 170, y: y - 8, width: 340, height: 34)
-        NSColor.white.withAlphaComponent(0.16).setFill()
-        NSBezierPath(roundedRect: field, xRadius: 8, yRadius: 8).fill()
-        NSColor.white.withAlphaComponent(0.55).setStroke()
-        NSBezierPath(roundedRect: field, xRadius: 8, yRadius: 8).stroke()
-        let bullets = passwordBuffer.isEmpty ? "Password" : String(repeating: "•", count: passwordBuffer.count)
-        drawCentered(bullets, y: y, size: 18, color: passwordBuffer.isEmpty ? .lightGray : .white)
-    }
-
-    private func drawCentered(_ text: String, y: CGFloat, size: CGFloat, color: NSColor) {
-        let attrs: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: size, weight: .semibold), .foregroundColor: color]
-        let string = NSAttributedString(string: text, attributes: attrs)
-        string.draw(at: CGPoint(x: bounds.midX - string.size().width / 2, y: y))
+        NSColor.black.setFill()
+        bounds.fill()
     }
 
     override func keyDown(with event: NSEvent) {
         let key = event.charactersIgnoringModifiers?.lowercased()
-        if event.modifierFlags.contains(.command), key == "q" {
+        let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+
+        if modifiers.contains(.command), key == "q" {
             onEmergencyQuit?()
-        } else if key == "t" && passwordBuffer.isEmpty {
+        } else if key == "t" && modifiers.contains(.function) {
             onAuthenticate?()
         } else if event.keyCode == 36 || event.keyCode == 76 {
-            if passwordBuffer.isEmpty {
+            if overlayView.passwordBuffer.isEmpty {
                 onAuthenticate?()
             } else {
-                onPasswordSubmit?(passwordBuffer)
+                onPasswordSubmit?(overlayView.passwordBuffer)
             }
         } else if event.keyCode == 51 {
-            if !passwordBuffer.isEmpty { passwordBuffer.removeLast() }
-            setStatus("Type password, press Return, or press T for Touch ID", color: .white)
+            if !overlayView.passwordBuffer.isEmpty { overlayView.passwordBuffer.removeLast() }
+            overlayView.isFocused = !overlayView.passwordBuffer.isEmpty
+            setStatus("Type password and press Return", color: .white)
         } else if event.keyCode == 53 {
-            escapeCount += 1
-            setStatus("Emergency quit: press Esc \(max(0, 5 - escapeCount)) more times", color: .systemOrange)
-            if escapeCount >= 5 { onEmergencyQuit?() }
-        } else if let chars = event.characters, !chars.isEmpty, !event.modifierFlags.contains(.command), !event.modifierFlags.contains(.control), !event.modifierFlags.contains(.option) {
-            passwordBuffer.append(contentsOf: chars)
-            setStatus("Press Return to unlock, or Backspace to edit.", color: .white)
+            overlayView.escapeCount += 1
+            setStatus("Emergency quit: Esc ×\(max(0, 5 - overlayView.escapeCount)) more", color: NSColor.systemOrange)
+            if overlayView.escapeCount >= 5 { onEmergencyQuit?() }
+        } else if let chars = event.characters, !chars.isEmpty,
+                  !modifiers.contains(.command), !modifiers.contains(.control) {
+            overlayView.escapeCount = 0
+            overlayView.passwordBuffer.append(contentsOf: chars)
+            overlayView.isFocused = true
+            setStatus("Press Return to unlock", color: NSColor.systemCyan)
         } else {
-            setStatus("Shortcut ignored. Still locked.", color: .systemOrange)
+            setStatus("Shortcut ignored.", color: NSColor.systemOrange)
         }
     }
 
     func setStatus(_ text: String, color: NSColor) {
-        status = text
-        statusColor = color
-        needsDisplay = true
+        overlayView.status = text
+        overlayView.statusColor = color
+        overlayView.needsDisplay = true
     }
 
     func clearPassword() {
-        passwordBuffer = ""
-        needsDisplay = true
+        overlayView.passwordBuffer = ""
+        overlayView.isFocused = false
+        overlayView.needsDisplay = true
+    }
+
+    func shakeAndClear() {
+        let animation = CAKeyframeAnimation(keyPath: "transform.translation.x")
+        animation.timingFunction = CAMediaTimingFunction(name: .linear)
+        animation.duration = 0.4
+        animation.values = [0, -12, 12, -10, 10, -6, 6, -3, 3, 0]
+        overlayView.layer?.add(animation, forKey: "shake")
+        clearPassword()
+    }
+}
+
+// MARK: - OverlayView
+
+/// Transparent overlay that draws the lock UI above the video.
+@MainActor
+final class OverlayView: NSView {
+    var status = "" { didSet { textLayer.needsDisplay = true } }
+    var statusColor = NSColor.white { didSet { textLayer.needsDisplay = true } }
+    var passwordBuffer = "" { didSet { textLayer.needsDisplay = true } }
+    var escapeCount = 0
+    var isFocused = false { didSet { updateGlassBorder(); textLayer.needsDisplay = true } }
+    var hasVideo = false
+
+    private let glassView: NSVisualEffectView
+    private let textLayer: PasswordTextView
+
+    private let fieldW: CGFloat = 280
+    private let fieldH: CGFloat = 36
+
+    override init(frame frameRect: NSRect) {
+        let glassFrame = NSRect(
+            x: frameRect.width / 2 - 140,
+            y: 22,
+            width: 280,
+            height: 36
+        )
+
+        glassView = NSVisualEffectView(frame: glassFrame)
+        glassView.material = .hudWindow
+        glassView.blendingMode = .behindWindow
+        glassView.state = .active
+        glassView.wantsLayer = true
+        glassView.layer?.cornerRadius = 10
+        glassView.layer?.masksToBounds = true
+        glassView.layer?.borderWidth = 0.5
+        glassView.layer?.borderColor = NSColor(white: 1.0, alpha: 0.15).cgColor
+
+        textLayer = PasswordTextView(frame: NSRect(origin: .zero, size: frameRect.size))
+
+        super.init(frame: frameRect)
+        wantsLayer = true
+        layer?.isOpaque = false
+
+        addSubview(glassView)
+
+        textLayer.autoresizingMask = [.width, .height]
+        textLayer.overlay = self
+        addSubview(textLayer)
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    override func layout() {
+        super.layout()
+        let glassFrame = NSRect(
+            x: bounds.midX - fieldW / 2,
+            y: 22,
+            width: fieldW,
+            height: fieldH
+        )
+        glassView.frame = glassFrame
+    }
+
+    private func updateGlassBorder() {
+        if isFocused {
+            glassView.layer?.borderColor = NSColor(calibratedRed: 0.35, green: 0.68, blue: 1.0, alpha: 0.5).cgColor
+            glassView.layer?.borderWidth = 1.0
+        } else {
+            glassView.layer?.borderColor = NSColor(white: 1.0, alpha: 0.15).cgColor
+            glassView.layer?.borderWidth = 0.5
+        }
+    }
+}
+
+/// Draws password text and status on top of the glass view.
+@MainActor
+final class PasswordTextView: NSView {
+    weak var overlay: OverlayView?
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+        layer?.isOpaque = false
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    override func draw(_ dirtyRect: NSRect) {
+        guard let overlay else { return }
+        let cx = bounds.midX
+        let fieldY: CGFloat = 22
+
+        // -- H0Ver branding only when no video --
+        if !overlay.hasVideo {
+            drawTextCentered("H0Ver", at: CGPoint(x: cx, y: bounds.midY + 20), size: 72,
+                             color: NSColor(white: 0.78, alpha: 1.0), weight: .bold)
+        }
+
+        // -- Password text inside the glass pill --
+        if overlay.passwordBuffer.isEmpty {
+            drawTextCentered("Password", at: CGPoint(x: cx, y: fieldY + 9), size: 14,
+                             color: NSColor(white: 0.55, alpha: 1.0), weight: .regular)
+        } else {
+            let bullets = String(repeating: "•", count: overlay.passwordBuffer.count)
+            drawTextCentered(bullets, at: CGPoint(x: cx, y: fieldY + 7), size: 18,
+                             color: .white, weight: .medium)
+        }
+
+        // -- Status (only show if non-empty) --
+        if !overlay.status.isEmpty {
+            drawTextCentered(overlay.status, at: CGPoint(x: cx, y: fieldY + 36 + 10), size: 12,
+                             color: overlay.statusColor, weight: .medium)
+        }
+    }
+
+    private func drawTextCentered(_ text: String, at point: CGPoint, size: CGFloat,
+                                  color: NSColor = .white, weight: NSFont.Weight = .regular) {
+        let font = NSFont.systemFont(ofSize: size, weight: weight)
+        let attrs: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: color]
+        let str = NSAttributedString(string: text, attributes: attrs)
+        let textWidth = str.size().width
+        str.draw(at: CGPoint(x: point.x - textWidth / 2, y: point.y))
     }
 }
