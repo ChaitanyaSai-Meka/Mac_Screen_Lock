@@ -89,6 +89,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var keepFrontTimer: Timer?
     private var eventMonitors: [Any] = []
 
+    // Lockout state
+    private var failedAttempts = 0
+    private var lockedOut = false
+    private var lockoutTimer: Timer?
+    private let maxAttempts = 5
+    private var lockoutDuration: TimeInterval { Double(min(failedAttempts - maxAttempts + 1, 6)) * 10.0 }  // 10s, 20s, 30s... up to 60s
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApplication.shared.setActivationPolicy(.accessory)
         makeMenuBarItem()
@@ -119,7 +126,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         config = Config.load()
         authenticationInProgress = false
         applyLockedPresentationOptions()
-        windows.forEach { ($0.contentView as? LockView)?.stopVideo(); $0.close() }
+        windows.forEach { ($0.contentView as? LockView)?.cleanup(); $0.close() }
         windows = NSScreen.screens.map(makeWindow)
         startKeepFrontTimer()
         NSApplication.shared.activate(ignoringOtherApps: true)
@@ -134,6 +141,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.restorePresentationOptions()
             NSApplication.shared.terminate(nil)
         }
+        view.isLockedOut = { [weak self] in self?.lockedOut ?? false }
 
         let window = KeyableWindow(contentRect: screen.frame, styleMask: [.borderless], backing: .buffered, defer: false, screen: screen)
         window.level = .screenSaver
@@ -160,7 +168,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         for window in windows {
             window.level = .screenSaver
             window.orderFrontRegardless()
-            window.contentView?.needsDisplay = true
         }
         reassertFirstResponder()
     }
@@ -199,7 +206,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         } as Any)
         eventMonitors.append(NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .leftMouseDragged, .leftMouseUp, .rightMouseDown, .rightMouseDragged, .rightMouseUp, .otherMouseDown, .otherMouseDragged, .otherMouseUp]) { [weak self] event in
             guard let self, !self.windows.isEmpty else { return event }
-            self.setStatus("Type password and press Return ⏎", color: .white)
             return nil
         } as Any)
     }
@@ -212,9 +218,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func authenticateWithTouchID() {
-        guard !windows.isEmpty, !authenticationInProgress else { return }
+        guard !windows.isEmpty, !authenticationInProgress, !lockedOut else { return }
         authenticationInProgress = true
-        setStatus("Waiting for Touch ID…", color: NSColor.systemCyan)
+        setStatus("Waiting for Touch ID...", color: NSColor.systemCyan)
 
         let context = LAContext()
         context.localizedCancelTitle = "Stay Locked"
@@ -222,7 +228,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         var error: NSError?
         guard context.canEvaluatePolicy(.deviceOwnerAuthentication, error: &error) else {
             authenticationInProgress = false
-            setStatus("Biometrics unavailable: \(error?.localizedDescription ?? "unknown")", color: NSColor.systemRed)
+            setStatus("Biometrics unavailable", color: NSColor.systemRed)
             reassertFirstResponder()
             return
         }
@@ -232,7 +238,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 guard let self else { return }
                 self.authenticationInProgress = false
                 if success {
-                    self.unlock()
+                    self.performUnlock()
                 } else {
                     self.setStatus(authError?.localizedDescription ?? "Authentication cancelled.", color: NSColor.systemOrange)
                     self.reassertFirstResponder()
@@ -247,21 +253,75 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func validate(password: String) {
-        guard !windows.isEmpty else { return }
+        guard !windows.isEmpty, !lockedOut else { return }
+
         if password == config.appPassword {
-            unlock()
+            failedAttempts = 0
+            performUnlock()
         } else {
+            failedAttempts += 1
             windows.compactMap { $0.contentView as? LockView }.forEach { $0.shakeAndClear() }
-            setStatus("Incorrect password", color: NSColor.systemRed)
+
+            if failedAttempts >= maxAttempts {
+                startLockout()
+            } else {
+                let remaining = maxAttempts - failedAttempts
+                setStatus("Wrong password — \(remaining) attempt\(remaining == 1 ? "" : "s") left", color: NSColor.systemRed)
+            }
         }
     }
 
-    private func unlock() {
-        keepFrontTimer?.invalidate()
-        keepFrontTimer = nil
-        windows.forEach { ($0.contentView as? LockView)?.stopVideo(); $0.close() }
-        windows = []
-        restorePresentationOptions()
+    private var lockoutRemaining = 0
+
+    private func startLockout() {
+        lockedOut = true
+        let duration = lockoutDuration
+        lockoutRemaining = Int(duration)
+
+        windows.compactMap { $0.contentView as? LockView }.forEach { $0.setLockedOut(true) }
+        setStatus("Too many attempts \u{2014} wait \(lockoutRemaining)s", color: NSColor.systemRed)
+
+        lockoutTimer?.invalidate()
+        lockoutTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.lockoutRemaining -= 1
+                if self.lockoutRemaining <= 0 {
+                    self.lockoutTimer?.invalidate()
+                    self.lockoutTimer = nil
+                    self.lockedOut = false
+                    self.windows.compactMap { $0.contentView as? LockView }.forEach { $0.setLockedOut(false) }
+                    self.setStatus("", color: .white)
+                } else {
+                    self.setStatus("Too many attempts \u{2014} wait \(self.lockoutRemaining)s", color: NSColor.systemRed)
+                }
+            }
+        }
+    }
+
+    private func performUnlock() {
+        lockoutTimer?.invalidate()
+        lockoutTimer = nil
+        lockedOut = false
+        failedAttempts = 0
+
+        // Fade out then quit
+        NSAnimationContext.runAnimationGroup({ context in
+            context.duration = 0.3
+            for window in self.windows {
+                window.animator().alphaValue = 0
+            }
+        }, completionHandler: {
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                self.keepFrontTimer?.invalidate()
+                self.keepFrontTimer = nil
+                self.windows.forEach { ($0.contentView as? LockView)?.cleanup(); $0.close() }
+                self.windows = []
+                self.restorePresentationOptions()
+                NSApplication.shared.terminate(nil)
+            }
+        })
     }
 }
 
@@ -282,6 +342,7 @@ final class LockView: NSView {
     var onAuthenticate: (() -> Void)?
     var onPasswordSubmit: ((String) -> Void)?
     var onEmergencyQuit: (() -> Void)?
+    var isLockedOut: (() -> Bool)?
 
     private var player: AVPlayer?
     private var playerLayer: AVPlayerLayer?
@@ -324,7 +385,11 @@ final class LockView: NSView {
     }
 
     override func viewDidMoveToWindow() { window?.makeFirstResponder(self) }
-    func stopVideo() { player?.pause() }
+
+    func cleanup() {
+        player?.pause()
+        overlayView.stopClock()
+    }
 
     override func draw(_ dirtyRect: NSRect) {
         NSColor.black.setFill()
@@ -332,6 +397,9 @@ final class LockView: NSView {
     }
 
     override func keyDown(with event: NSEvent) {
+        // Block all input during lockout
+        if isLockedOut?() == true { return }
+
         let key = event.charactersIgnoringModifiers?.lowercased()
         let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
 
@@ -348,32 +416,32 @@ final class LockView: NSView {
         } else if event.keyCode == 51 {
             if !overlayView.passwordBuffer.isEmpty { overlayView.passwordBuffer.removeLast() }
             overlayView.isFocused = !overlayView.passwordBuffer.isEmpty
-            setStatus("Type password and press Return", color: .white)
+            setStatus("", color: .white)
         } else if event.keyCode == 53 {
             overlayView.escapeCount += 1
-            setStatus("Emergency quit: Esc ×\(max(0, 5 - overlayView.escapeCount)) more", color: NSColor.systemOrange)
+            setStatus("Emergency quit: Esc x\(max(0, 5 - overlayView.escapeCount)) more", color: NSColor.systemOrange)
             if overlayView.escapeCount >= 5 { onEmergencyQuit?() }
         } else if let chars = event.characters, !chars.isEmpty,
                   !modifiers.contains(.command), !modifiers.contains(.control) {
             overlayView.escapeCount = 0
             overlayView.passwordBuffer.append(contentsOf: chars)
             overlayView.isFocused = true
-            setStatus("Press Return to unlock", color: NSColor.systemCyan)
-        } else {
-            setStatus("Shortcut ignored.", color: NSColor.systemOrange)
+            setStatus("", color: .white)
         }
     }
 
     func setStatus(_ text: String, color: NSColor) {
         overlayView.status = text
         overlayView.statusColor = color
-        overlayView.needsDisplay = true
     }
 
     func clearPassword() {
         overlayView.passwordBuffer = ""
         overlayView.isFocused = false
-        overlayView.needsDisplay = true
+    }
+
+    func setLockedOut(_ locked: Bool) {
+        overlayView.isLockedOut = locked
     }
 
     func shakeAndClear() {
@@ -396,10 +464,12 @@ final class OverlayView: NSView {
     var passwordBuffer = "" { didSet { textLayer.needsDisplay = true } }
     var escapeCount = 0
     var isFocused = false { didSet { updateGlassBorder(); textLayer.needsDisplay = true } }
+    var isLockedOut = false { didSet { updateGlassBorder(); textLayer.needsDisplay = true } }
     var hasVideo = false
 
     private let glassView: NSVisualEffectView
     private let textLayer: PasswordTextView
+    private var clockTimer: Timer?
 
     private let fieldW: CGFloat = 280
     private let fieldH: CGFloat = 36
@@ -433,9 +503,19 @@ final class OverlayView: NSView {
         textLayer.autoresizingMask = [.width, .height]
         textLayer.overlay = self
         addSubview(textLayer)
+
+        // Update clock every 30 seconds
+        clockTimer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.textLayer.needsDisplay = true }
+        }
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    func stopClock() {
+        clockTimer?.invalidate()
+        clockTimer = nil
+    }
 
     override func layout() {
         super.layout()
@@ -449,7 +529,10 @@ final class OverlayView: NSView {
     }
 
     private func updateGlassBorder() {
-        if isFocused {
+        if isLockedOut {
+            glassView.layer?.borderColor = NSColor.systemRed.withAlphaComponent(0.5).cgColor
+            glassView.layer?.borderWidth = 1.0
+        } else if isFocused {
             glassView.layer?.borderColor = NSColor(calibratedRed: 0.35, green: 0.68, blue: 1.0, alpha: 0.5).cgColor
             glassView.layer?.borderWidth = 1.0
         } else {
@@ -459,10 +542,30 @@ final class OverlayView: NSView {
     }
 }
 
-/// Draws password text and status on top of the glass view.
+// MARK: - PasswordTextView
+
+/// Draws clock, password text, and status on top of the glass view.
 @MainActor
 final class PasswordTextView: NSView {
     weak var overlay: OverlayView?
+
+    private static let timeFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "h:mm"
+        return f
+    }()
+
+    private static let periodFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "a"
+        return f
+    }()
+
+    private static let dateFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "EEEE, MMMM d"
+        return f
+    }()
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -477,14 +580,45 @@ final class PasswordTextView: NSView {
         let cx = bounds.midX
         let fieldY: CGFloat = 22
 
+        // -- Clock --
+        let now = Date()
+        let time = Self.timeFormatter.string(from: now)
+        let period = " " + Self.periodFormatter.string(from: now)
+        let date = Self.dateFormatter.string(from: now)
+
+        // Build a single attributed string: "10:12 AM" with mixed sizes
+        let timeFont = NSFont.systemFont(ofSize: 84, weight: .thin)
+        let periodFont = NSFont.systemFont(ofSize: 24, weight: .light)
+
+        let clockStr = NSMutableAttributedString(
+            string: time,
+            attributes: [.font: timeFont, .foregroundColor: NSColor.white]
+        )
+        clockStr.append(NSAttributedString(
+            string: period,
+            attributes: [.font: periodFont, .foregroundColor: NSColor(white: 0.6, alpha: 1.0)]
+        ))
+
+        let clockSize = clockStr.size()
+        let clockX = cx - clockSize.width / 2
+        let clockY = bounds.midY + 20
+        clockStr.draw(at: CGPoint(x: clockX, y: clockY))
+
+        // Date centered below
+        drawTextCentered(date, at: CGPoint(x: cx, y: clockY - 14), size: 20,
+                         color: NSColor(white: 0.6, alpha: 1.0), weight: .regular)
+
         // -- H0Ver branding only when no video --
         if !overlay.hasVideo {
-            drawTextCentered("H0Ver", at: CGPoint(x: cx, y: bounds.midY + 20), size: 72,
-                             color: NSColor(white: 0.78, alpha: 1.0), weight: .bold)
+            drawTextCentered("H0Ver", at: CGPoint(x: cx, y: clockY + clockSize.height + 10), size: 16,
+                             color: NSColor(white: 0.3, alpha: 1.0), weight: .medium)
         }
 
         // -- Password text inside the glass pill --
-        if overlay.passwordBuffer.isEmpty {
+        if overlay.isLockedOut {
+            drawTextCentered("Locked", at: CGPoint(x: cx, y: fieldY + 9), size: 14,
+                             color: NSColor.systemRed.withAlphaComponent(0.8), weight: .medium)
+        } else if overlay.passwordBuffer.isEmpty {
             drawTextCentered("Password", at: CGPoint(x: cx, y: fieldY + 9), size: 14,
                              color: NSColor(white: 0.55, alpha: 1.0), weight: .regular)
         } else {
@@ -493,7 +627,7 @@ final class PasswordTextView: NSView {
                              color: .white, weight: .medium)
         }
 
-        // -- Status (only show if non-empty) --
+        // -- Status --
         if !overlay.status.isEmpty {
             drawTextCentered(overlay.status, at: CGPoint(x: cx, y: fieldY + 36 + 10), size: 12,
                              color: overlay.statusColor, weight: .medium)
