@@ -15,10 +15,10 @@ final class SettingsWindowController {
             return
         }
 
-        let contentView = SettingsView(frame: NSRect(x: 0, y: 0, width: 480, height: 380))
+        let contentView = SettingsView(frame: NSRect(x: 0, y: 0, width: 480, height: 540))
 
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 480, height: 380),
+            contentRect: NSRect(x: 0, y: 0, width: 480, height: 540),
             styleMask: [.titled, .closable],
             backing: .buffered,
             defer: false
@@ -46,6 +46,13 @@ final class SettingsView: NSView {
     private let maxAttemptsField = NSTextField()
     private let maxAttemptsStepper = NSStepper()
     private let lockoutDurationPopup = NSPopUpButton()
+
+    private let clock24HourCheckbox = NSButton(checkboxWithTitle: "Use 24-hour time format", target: nil, action: nil)
+    private let clockSecondsCheckbox = NSButton(checkboxWithTitle: "Show seconds", target: nil, action: nil)
+    private let clockDateCheckbox = NSButton(checkboxWithTitle: "Show date", target: nil, action: nil)
+
+    private let brandingField = NSTextField()
+
     private let saveButton = NSButton(title: "Save", target: nil, action: nil)
     private let statusLabel = NSTextField(labelWithString: "")
 
@@ -143,10 +150,53 @@ final class SettingsView: NSView {
         lockoutDurationPopup.font = NSFont.systemFont(ofSize: 13)
         addSubview(lockoutDurationPopup)
 
+        // ── Clock Settings ──
+        y -= 44
+        let divider3 = makeDivider(y: y + 16, width: bounds.width - 2 * padding, x: padding)
+        addSubview(divider3)
+
+        let clockTitle = NSTextField(labelWithString: "Clock Display")
+        clockTitle.font = NSFont.systemFont(ofSize: 14, weight: .medium)
+        clockTitle.frame = NSRect(x: padding, y: y - 4, width: 200, height: 20)
+        addSubview(clockTitle)
+
+        y -= 30
+        clock24HourCheckbox.frame = NSRect(x: fieldX, y: y, width: fieldW, height: 20)
+        clock24HourCheckbox.font = NSFont.systemFont(ofSize: 13)
+        addSubview(clock24HourCheckbox)
+
+        y -= 26
+        clockSecondsCheckbox.frame = NSRect(x: fieldX, y: y, width: fieldW, height: 20)
+        clockSecondsCheckbox.font = NSFont.systemFont(ofSize: 13)
+        addSubview(clockSecondsCheckbox)
+
+        y -= 26
+        clockDateCheckbox.frame = NSRect(x: fieldX, y: y, width: fieldW, height: 20)
+        clockDateCheckbox.font = NSFont.systemFont(ofSize: 13)
+        addSubview(clockDateCheckbox)
+
+        // ── Branding ──
+        y -= 44
+        let divider4 = makeDivider(y: y + 16, width: bounds.width - 2 * padding, x: padding)
+        addSubview(divider4)
+
+        let brandingTitle = NSTextField(labelWithString: "Appearance")
+        brandingTitle.font = NSFont.systemFont(ofSize: 14, weight: .medium)
+        brandingTitle.frame = NSRect(x: padding, y: y - 4, width: 200, height: 20)
+        addSubview(brandingTitle)
+
+        y -= 36
+        addSubview(makeLabel("Fallback Text", at: NSPoint(x: padding, y: y + 2)))
+
+        brandingField.frame = NSRect(x: fieldX, y: y, width: fieldW, height: 24)
+        brandingField.placeholderString = "H0Ver"
+        brandingField.font = NSFont.systemFont(ofSize: 13)
+        addSubview(brandingField)
+
         // ── Save Button ──
         y -= 50
-        let divider3 = makeDivider(y: y + 20, width: bounds.width - 2 * padding, x: padding)
-        addSubview(divider3)
+        let divider5 = makeDivider(y: y + 20, width: bounds.width - 2 * padding, x: padding)
+        addSubview(divider5)
 
         saveButton.frame = NSRect(x: bounds.width - padding - 80, y: y - 6, width: 80, height: 30)
         saveButton.bezelStyle = .rounded
@@ -180,6 +230,18 @@ final class SettingsView: NSView {
         case 120: lockoutDurationPopup.selectItem(at: 3)
         default: lockoutDurationPopup.selectItem(at: 0)
         }
+
+        clock24HourCheckbox.state = defaults.bool(forKey: "ClockUse24Hour") ? .on : .off
+        clockSecondsCheckbox.state = defaults.bool(forKey: "ClockShowSeconds") ? .on : .off
+        
+        // Defaults to true for date if not set, check by registering default
+        defaults.register(defaults: [
+            "ClockShowDate": true,
+            "BrandingText": "H0Ver"
+        ])
+        clockDateCheckbox.state = defaults.bool(forKey: "ClockShowDate") ? .on : .off
+
+        brandingField.stringValue = defaults.string(forKey: "BrandingText") ?? "H0Ver"
     }
 
     @objc private func save() {
@@ -211,6 +273,15 @@ final class SettingsView: NSView {
         let durations = [10, 30, 60, 120]
         let idx = lockoutDurationPopup.indexOfSelectedItem
         defaults.set(durations[idx], forKey: "LockoutDuration")
+
+        // Clock
+        defaults.set(clock24HourCheckbox.state == .on, forKey: "ClockUse24Hour")
+        defaults.set(clockSecondsCheckbox.state == .on, forKey: "ClockShowSeconds")
+        defaults.set(clockDateCheckbox.state == .on, forKey: "ClockShowDate")
+
+        // Branding
+        let branding = brandingField.stringValue.trimmingCharacters(in: .whitespaces)
+        defaults.set(branding.isEmpty ? "H0Ver" : branding, forKey: "BrandingText")
 
         // Clear password fields
         passwordField.stringValue = ""

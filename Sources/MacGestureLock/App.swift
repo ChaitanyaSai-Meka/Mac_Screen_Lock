@@ -516,13 +516,19 @@ final class OverlayView: NSView {
         textLayer.overlay = self
         addSubview(textLayer)
 
-        // Update clock every 30 seconds
-        clockTimer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.textLayer.needsDisplay = true }
-        }
+        startClock()
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    func startClock() {
+        clockTimer?.invalidate()
+        let showSeconds = UserDefaults.standard.bool(forKey: "ClockShowSeconds")
+        let interval: TimeInterval = showSeconds ? 1.0 : 30.0
+        clockTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.textLayer.needsDisplay = true }
+        }
+    }
 
     func stopClock() {
         clockTimer?.invalidate()
@@ -592,37 +598,60 @@ final class PasswordTextView: NSView {
         let cx = bounds.midX
         let fieldY: CGFloat = 22
 
-        // -- Clock --
+        // -- Clock Settings --
+        let defaults = UserDefaults.standard
+        let use24Hour = defaults.bool(forKey: "ClockUse24Hour")
+        let showSeconds = defaults.bool(forKey: "ClockShowSeconds")
+        // Default true for date if not registered yet
+        defaults.register(defaults: ["ClockShowDate": true])
+        let showDate = defaults.bool(forKey: "ClockShowDate")
+
+        // Formatters
+        let timeFormatter = DateFormatter()
+        if use24Hour {
+            timeFormatter.dateFormat = showSeconds ? "H:mm:ss" : "H:mm"
+        } else {
+            timeFormatter.dateFormat = showSeconds ? "h:mm:ss" : "h:mm"
+        }
+
         let now = Date()
-        let time = Self.timeFormatter.string(from: now)
-        let period = " " + Self.periodFormatter.string(from: now)
+        let time = timeFormatter.string(from: now)
+        let period = use24Hour ? "" : (" " + Self.periodFormatter.string(from: now))
         let date = Self.dateFormatter.string(from: now)
 
-        // Build a single attributed string: "10:12 AM" with mixed sizes
+        // Build a single attributed string for time + period
         let timeFont = NSFont.systemFont(ofSize: 84, weight: .thin)
-        let periodFont = NSFont.systemFont(ofSize: 24, weight: .light)
-
         let clockStr = NSMutableAttributedString(
             string: time,
             attributes: [.font: timeFont, .foregroundColor: NSColor.white]
         )
-        clockStr.append(NSAttributedString(
-            string: period,
-            attributes: [.font: periodFont, .foregroundColor: NSColor(white: 0.6, alpha: 1.0)]
-        ))
+        
+        if !use24Hour {
+            let periodFont = NSFont.systemFont(ofSize: 24, weight: .light)
+            clockStr.append(NSAttributedString(
+                string: period,
+                attributes: [.font: periodFont, .foregroundColor: NSColor(white: 0.6, alpha: 1.0)]
+            ))
+        }
 
         let clockSize = clockStr.size()
         let clockX = cx - clockSize.width / 2
-        let clockY = bounds.midY + 20
+        var clockY = bounds.midY + 20
+        if !showDate {
+            clockY -= 10 // Shift down slightly if no date to keep visual balance
+        }
         clockStr.draw(at: CGPoint(x: clockX, y: clockY))
 
         // Date centered below
-        drawTextCentered(date, at: CGPoint(x: cx, y: clockY - 14), size: 20,
-                         color: NSColor(white: 0.6, alpha: 1.0), weight: .regular)
+        if showDate {
+            drawTextCentered(date, at: CGPoint(x: cx, y: clockY - 14), size: 20,
+                             color: NSColor(white: 0.6, alpha: 1.0), weight: .regular)
+        }
 
-        // -- H0Ver branding only when no video --
+        // -- Branding only when no video --
         if !overlay.hasVideo {
-            drawTextCentered("H0Ver", at: CGPoint(x: cx, y: clockY + clockSize.height + 10), size: 16,
+            let brandingText = defaults.string(forKey: "BrandingText") ?? "H0Ver"
+            drawTextCentered(brandingText, at: CGPoint(x: cx, y: clockY + clockSize.height + 10), size: 16,
                              color: NSColor(white: 0.3, alpha: 1.0), weight: .medium)
         }
 
