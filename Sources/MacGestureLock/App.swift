@@ -7,32 +7,42 @@ import LocalAuthentication
 struct Config {
     let videoPath: String?
     let appPassword: String
+    let maxAttempts: Int
+    let lockoutBaseDuration: Int
 
-    /// Load config with priority: .env file → UserDefaults → environment variables → defaults
+    /// Load config with priority: UserDefaults → .env file → environment variables → defaults
     static func load() -> Config {
         let env = loadDotEnv()
-        let path = env["VIDEO_PATH"]
-            ?? UserDefaults.standard.string(forKey: "ScreensaverVideo")
+        let defaults = UserDefaults.standard
+
+        let path = defaults.string(forKey: "ScreensaverVideo")
+            ?? env["VIDEO_PATH"]
             ?? ProcessInfo.processInfo.environment["SCREENSAVER_VIDEO"]
-        let password = env["LOCK_PASSWORD"]
-            ?? UserDefaults.standard.string(forKey: "AppPassword")
+
+        let password = defaults.string(forKey: "AppPassword")
+            ?? env["LOCK_PASSWORD"]
             ?? ProcessInfo.processInfo.environment["LOCK_PASSWORD"]
             ?? "hover"
-        return Config(videoPath: path, appPassword: password)
+
+        let maxAttempts = defaults.integer(forKey: "MaxAttempts")
+        let lockoutBase = defaults.integer(forKey: "LockoutDuration")
+
+        return Config(
+            videoPath: path,
+            appPassword: password,
+            maxAttempts: maxAttempts > 0 ? maxAttempts : 5,
+            lockoutBaseDuration: lockoutBase > 0 ? lockoutBase : 10
+        )
     }
 
     /// Parse .env file from the executable's directory or common locations
     private static func loadDotEnv() -> [String: String] {
         let candidates = [
-            // Next to the executable
             (ProcessInfo.processInfo.arguments.first.map { ($0 as NSString).deletingLastPathComponent } ?? ".") + "/.env",
-            // Project root (when running from .build/debug/)
             (ProcessInfo.processInfo.arguments.first.map {
                 let dir = ($0 as NSString).deletingLastPathComponent
-                // Walk up from .build/debug/ to project root
                 return (dir as NSString).appendingPathComponent("../../.env")
             } ?? ""),
-            // Current working directory
             FileManager.default.currentDirectoryPath + "/.env"
         ]
 
@@ -50,7 +60,6 @@ struct Config {
                 guard parts.count == 2 else { continue }
                 let key = parts[0].trimmingCharacters(in: .whitespaces)
                 var value = parts[1].trimmingCharacters(in: .whitespaces)
-                // Strip surrounding quotes
                 if (value.hasPrefix("\"") && value.hasSuffix("\"")) || (value.hasPrefix("'") && value.hasSuffix("'")) {
                     value = String(value.dropFirst().dropLast())
                 }
@@ -93,8 +102,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var failedAttempts = 0
     private var lockedOut = false
     private var lockoutTimer: Timer?
-    private let maxAttempts = 5
-    private var lockoutDuration: TimeInterval { Double(min(failedAttempts - maxAttempts + 1, 6)) * 10.0 }  // 10s, 20s, 30s... up to 60s
+    private var maxAttempts: Int { config.maxAttempts }
+    private var lockoutDuration: TimeInterval {
+        Double(config.lockoutBaseDuration) * Double(min(failedAttempts - maxAttempts + 1, 6))
+    }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApplication.shared.setActivationPolicy(.accessory)
@@ -109,13 +120,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem?.button?.title = "H0Ver"
         let menu = NSMenu()
         menu.addItem(withTitle: "Lock Now", action: #selector(lockFromMenu), keyEquivalent: "l")
-        menu.addItem(withTitle: "Unlock with Touch ID", action: #selector(authenticateFromMenu), keyEquivalent: "u")
+        menu.addItem(.separator())
+        menu.addItem(withTitle: "Settings...", action: #selector(openSettings), keyEquivalent: ",")
+        menu.addItem(.separator())
         menu.addItem(withTitle: "Quit", action: #selector(quit), keyEquivalent: "q")
         statusItem?.menu = menu
     }
 
     @objc private func lockFromMenu() { lock() }
-    @objc private func authenticateFromMenu() { authenticateWithTouchID() }
+    @objc private func openSettings() { SettingsWindowController.shared.show() }
     @objc private func quit() {
         restorePresentationOptions()
         NSApplication.shared.terminate(nil)
@@ -305,7 +318,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         lockedOut = false
         failedAttempts = 0
 
-        // Fade out then quit
+        // Fade out, stay in menu bar
         NSAnimationContext.runAnimationGroup({ context in
             context.duration = 0.3
             for window in self.windows {
@@ -319,7 +332,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self.windows.forEach { ($0.contentView as? LockView)?.cleanup(); $0.close() }
                 self.windows = []
                 self.restorePresentationOptions()
-                NSApplication.shared.terminate(nil)
             }
         })
     }

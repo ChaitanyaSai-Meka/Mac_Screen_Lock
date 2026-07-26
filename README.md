@@ -8,50 +8,50 @@ If no video is configured, the app displays a black screen with `H0Ver` in silve
 
 This is an app-level overlay, **not** a replacement for macOS LoginWindow, FileVault, or the system lock screen. A privileged user or someone with physical access may still bypass or quit the app. Keep normal macOS security enabled.
 
-## Build
+## Build and Install
+
+To build the app bundle, use the provided script:
 
 ```bash
-swift build
+./bundle.sh
 ```
 
-## Run
+This will compile a release binary and package it into `H0Ver.app`.
+
+You can run the app directly or copy it to your Applications folder:
 
 ```bash
-swift run mac-gesture-lock
+open H0Ver.app
+# OR
+cp -r H0Ver.app /Applications/
 ```
 
-The app keeps running while the overlay is active. Unlock it or use the emergency quit shortcut to return to the shell.
+## How It Works
+
+Once launched, H0Ver lives in your menu bar (as a menu bar extra). It does not appear in your Dock.
+
+- Click the `H0Ver` menu bar item and select **Lock Now** (or press `L` when the menu is open).
+- When unlocked, the lock screen disappears but the app stays running in the menu bar.
+- To quit completely, select **Quit** from the menu bar.
 
 ## Configuration
 
-### `.env` file (recommended)
+Select **Settings...** from the menu bar to open the Preferences window.
 
-The easiest way to configure H0Ver. Create a `.env` file in the project root:
+You can configure:
+- **Video Path:** Choose a local `.mp4`, `.mov`, or `.m4v` file.
+- **Password:** Set your unlock password (default is `hover`).
+- **Lockout (Max Attempts):** Number of incorrect password attempts before a cooldown is enforced.
+- **Lockout (Cooldown Duration):** Base cooldown time in seconds when locked out. Subsequent failed attempts will increase the lockout duration incrementally.
 
-```env
-# Path to video file (.mp4, .mov, .m4v)
-VIDEO_PATH=/path/to/your/video.mp4
+### Configuration Priority Order
 
-# Password to unlock (default: hover)
-LOCK_PASSWORD=hover
-```
+1. **UserDefaults** (modified via the Settings UI)
+2. **`.env` file** (if present next to the executable, in project root, or working directory)
+3. **Environment variables**
+4. **Defaults**
 
-The `.env` file is automatically detected next to the executable, in the project root, or in the current working directory.
-
-### Environment variables
-
-```bash
-SCREENSAVER_VIDEO="/path/to/video.mp4" LOCK_PASSWORD="my-secret" swift run mac-gesture-lock
-```
-
-### UserDefaults
-
-```bash
-defaults write MacGestureLock ScreensaverVideo -string "/path/to/video.mp4"
-defaults write MacGestureLock AppPassword -string "my-secret"
-```
-
-**Priority order:** `.env` file → UserDefaults → environment variables → defaults.
+*(If you were using a `.env` file previously, its values will still be read if not overridden by the Settings UI).*
 
 ## Unlocking
 
@@ -68,6 +68,8 @@ Type the password directly and press **Return**. No need to click the field.
 - The password field has a frosted-glass blur effect over the video.
 - One overlay window per display, kept frontmost at screen-saver level.
 - Displays recreate automatically when screen parameters change.
+- A live clock and date are displayed on the lock screen.
+- After consecutive incorrect attempts, the password field displays a red border, blocks input, and shows a countdown timer.
 
 ## Notes
 
