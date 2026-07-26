@@ -15,7 +15,7 @@ final class SettingsWindowController {
             return
         }
 
-        let contentHeight: CGFloat = 540
+        let contentHeight: CGFloat = 640
         let windowHeight: CGFloat = 400
 
         let settingsView = SettingsView(frame: NSRect(x: 0, y: 0, width: 480, height: contentHeight))
@@ -54,6 +54,7 @@ final class SettingsWindowController {
 final class SettingsView: NSView {
     private let videoPathField = NSTextField()
     private let browseButton = NSButton(title: "Browse...", target: nil, action: nil)
+    private let oldPasswordField = NSSecureTextField()
     private let passwordField = NSSecureTextField()
     private let confirmPasswordField = NSSecureTextField()
     private let maxAttemptsField = NSTextField()
@@ -113,6 +114,14 @@ final class SettingsView: NSView {
 
         // ── Password ──
         y -= 40
+        addSubview(makeLabel("Old Password", at: NSPoint(x: padding, y: y + 2)))
+
+        oldPasswordField.frame = NSRect(x: fieldX, y: y, width: fieldW, height: 24)
+        oldPasswordField.placeholderString = "Required to save changes"
+        oldPasswordField.font = NSFont.systemFont(ofSize: 13)
+        addSubview(oldPasswordField)
+        
+        y -= 32
         addSubview(makeLabel("New Password", at: NSPoint(x: padding, y: y + 2)))
 
         passwordField.frame = NSRect(x: fieldX, y: y, width: fieldW, height: 24)
@@ -258,9 +267,30 @@ final class SettingsView: NSView {
     }
 
     @objc private func save() {
-        let defaults = UserDefaults.standard
+        statusLabel.textColor = .systemRed
 
-        // Video path
+        // Check old password
+        let currentPassword = KeychainHelper.shared.readPassword()
+        if let current = currentPassword, !current.isEmpty {
+            if oldPasswordField.stringValue != current {
+                statusLabel.stringValue = "Incorrect old password."
+                return
+            }
+        }
+
+        let newPass = passwordField.stringValue
+        let confirmPass = confirmPasswordField.stringValue
+
+        if !newPass.isEmpty || !confirmPass.isEmpty {
+            if newPass != confirmPass {
+                statusLabel.stringValue = "New passwords do not match."
+                return
+            }
+            KeychainHelper.shared.savePassword(newPass)
+        }
+
+        let defaults = UserDefaults.standard
+        
         let path = videoPathField.stringValue.trimmingCharacters(in: .whitespaces)
         if path.isEmpty {
             defaults.removeObject(forKey: "ScreensaverVideo")
@@ -268,24 +298,12 @@ final class SettingsView: NSView {
             defaults.set(path, forKey: "ScreensaverVideo")
         }
 
-        // Password
-        let pw = passwordField.stringValue
-        let confirm = confirmPasswordField.stringValue
-        if !pw.isEmpty {
-            if pw != confirm {
-                statusLabel.stringValue = "Passwords do not match."
-                statusLabel.textColor = .systemRed
-                return
-            }
-            defaults.set(pw, forKey: "AppPassword")
-        }
-
-        // Lockout
-        defaults.set(maxAttemptsStepper.integerValue, forKey: "MaxAttempts")
-
         let durations = [10, 30, 60, 120]
         let idx = lockoutDurationPopup.indexOfSelectedItem
         defaults.set(durations[idx], forKey: "LockoutDuration")
+
+        // Lockout
+        defaults.set(maxAttemptsStepper.integerValue, forKey: "MaxAttempts")
 
         // Clock
         defaults.set(clock24HourCheckbox.state == .on, forKey: "ClockUse24Hour")

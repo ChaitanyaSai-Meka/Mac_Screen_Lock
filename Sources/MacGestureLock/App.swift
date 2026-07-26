@@ -19,7 +19,13 @@ struct Config {
             ?? env["VIDEO_PATH"]
             ?? ProcessInfo.processInfo.environment["SCREENSAVER_VIDEO"]
 
-        let password = defaults.string(forKey: "AppPassword")
+        // Migrate old password if present, then read from Keychain
+        if let oldPassword = defaults.string(forKey: "AppPassword") {
+            KeychainHelper.shared.savePassword(oldPassword)
+            defaults.removeObject(forKey: "AppPassword")
+        }
+
+        let password = KeychainHelper.shared.readPassword()
             ?? env["LOCK_PASSWORD"]
             ?? ProcessInfo.processInfo.environment["LOCK_PASSWORD"]
             ?? "hover"
@@ -171,9 +177,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func startKeepFrontTimer() {
         keepFrontTimer?.invalidate()
-        keepFrontTimer = Timer.scheduledTimer(withTimeInterval: 0.35, repeats: true) { [weak self] _ in
+        let timer = Timer(timeInterval: 0.35, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.reassertOverlay() }
         }
+        RunLoop.main.add(timer, forMode: .common)
+        keepFrontTimer = timer
     }
 
     private func reassertOverlay() {
@@ -300,7 +308,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         setStatus("Too many attempts \u{2014} wait \(lockoutRemaining)s", color: NSColor.systemRed)
 
         lockoutTimer?.invalidate()
-        lockoutTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
+        let timer = Timer(timeInterval: 1.0, repeats: true) { [weak self] _ in
             DispatchQueue.main.async {
                 guard let self else { return }
                 self.lockoutRemaining -= 1
@@ -315,6 +323,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
             }
         }
+        RunLoop.main.add(timer, forMode: .common)
+        lockoutTimer = timer
     }
 
     private func performUnlock() {
@@ -534,9 +544,11 @@ final class OverlayView: NSView {
         clockTimer?.invalidate()
         let showSeconds = UserDefaults.standard.bool(forKey: "ClockShowSeconds")
         let interval: TimeInterval = showSeconds ? 1.0 : 30.0
-        clockTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
+        let timer = Timer(timeInterval: interval, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.textLayer.needsDisplay = true }
         }
+        RunLoop.main.add(timer, forMode: .common)
+        clockTimer = timer
     }
 
     func stopClock() {
@@ -594,13 +606,25 @@ final class PasswordTextView: NSView {
         return f
     }()
 
+    private let timeFormatter = DateFormatter()
+    private var lastUse24Hour: Bool?
+    private var lastShowSeconds: Bool?
+    private var cachedBrandingText: String?
+    private var cachedBrandingTextNeedsUpdate = true
+
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         wantsLayer = true
         layer?.isOpaque = false
+        
+        NotificationCenter.default.addObserver(self, selector: #selector(defaultsChanged), name: UserDefaults.didChangeNotification, object: nil)
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+    
+    @objc private func defaultsChanged() {
+        cachedBrandingTextNeedsUpdate = true
+    }
 
     override func draw(_ dirtyRect: NSRect) {
         guard let overlay else { return }
@@ -615,12 +639,14 @@ final class PasswordTextView: NSView {
         defaults.register(defaults: ["ClockShowDate": true])
         let showDate = defaults.bool(forKey: "ClockShowDate")
 
-        // Formatters
-        let timeFormatter = DateFormatter()
-        if use24Hour {
-            timeFormatter.dateFormat = showSeconds ? "H:mm:ss" : "H:mm"
-        } else {
-            timeFormatter.dateFormat = showSeconds ? "h:mm:ss" : "h:mm"
+        if lastUse24Hour != use24Hour || lastShowSeconds != showSeconds {
+            lastUse24Hour = use24Hour
+            lastShowSeconds = showSeconds
+            if use24Hour {
+                timeFormatter.dateFormat = showSeconds ? "H:mm:ss" : "H:mm"
+            } else {
+                timeFormatter.dateFormat = showSeconds ? "h:mm:ss" : "h:mm"
+            }
         }
 
         let now = Date()
@@ -659,8 +685,12 @@ final class PasswordTextView: NSView {
 
         // -- Branding only when no video --
         if !overlay.hasVideo {
-            let brandingText = defaults.string(forKey: "BrandingText") ?? "H0Ver"
-            drawTextCentered(brandingText, at: CGPoint(x: cx, y: clockY + clockSize.height + 10), size: 16,
+            if cachedBrandingTextNeedsUpdate {
+                cachedBrandingText = defaults.string(forKey: "BrandingText") ?? "H0Ver"
+                cachedBrandingTextNeedsUpdate = false
+            }
+            let text = cachedBrandingText ?? "H0Ver"
+            drawTextCentered(text, at: CGPoint(x: cx, y: clockY + clockSize.height + 10), size: 16,
                              color: NSColor(white: 0.3, alpha: 1.0), weight: .medium)
         }
 
