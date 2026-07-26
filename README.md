@@ -10,7 +10,6 @@ A premium macOS utility that overlays a full-screen video or an animated liquid 
 - **Touch ID Integration**: Press **Return** when the password field is empty to instantly invoke macOS Touch ID to unlock.
 - **Launch at Login**: Automatically start H0Ver securely in the background when you boot your Mac.
 - **Auto-Updates**: Checks the official GitHub repository for new versions on launch or manually via Settings.
-- **Keychain Security**: Your custom app password is encrypted and securely stored in the native macOS Keychain.
 - **Smart Cooldown**: Temporarily locks out intruders with an expanding cooldown timer after consecutive failed attempts.
 
 ## Security Limitation
