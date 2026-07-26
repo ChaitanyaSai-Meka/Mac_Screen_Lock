@@ -1,8 +1,16 @@
 # H0Ver — Mac Screen Lock
 
-A macOS app that overlays a full-screen video screensaver with audio, unlockable via an in-app password or Touch ID. The password field uses a native frosted-glass (liquid glass) effect.
+A premium macOS utility that overlays a full-screen video or an animated liquid gradient screensaver, unlockable via an in-app password or native Touch ID. The lock screen features a beautiful frosted-glass (liquid glass) password field, a live clock, and native lock screen widgets.
 
-If no video is configured, the app displays a black screen with `H0Ver` in silver text.
+## Features ✨
+
+- **Beautiful Backgrounds**: Choose between a custom looping video (`.mp4`, `.mov`) or a buttery smooth "Liquid Gradient" (powered by CoreAnimation).
+- **Global Hotkey**: Press **`Cmd + Option + L`** from *anywhere* on your Mac to instantly lock your screen.
+- **Lock Screen Widgets**: Displays a live Battery percentage using native SF Symbols, plus an optional Custom Message right below the clock.
+- **Touch ID Integration**: Press **Return** when the password field is empty to instantly invoke macOS Touch ID to unlock.
+- **Launch at Login**: Automatically start H0Ver securely in the background when you boot your Mac.
+- **Keychain Security**: Your custom app password is encrypted and securely stored in the native macOS Keychain.
+- **Smart Cooldown**: Temporarily locks out intruders with an expanding cooldown timer after consecutive failed attempts.
 
 ## Security Limitation
 
@@ -30,49 +38,34 @@ cp -r H0Ver.app /Applications/
 
 Once launched, H0Ver lives in your menu bar (as a menu bar extra). It does not appear in your Dock.
 
-- Click the `H0Ver` menu bar item and select **Lock Now** (or press `L` when the menu is open).
-- When unlocked, the lock screen disappears but the app stays running in the menu bar.
-- To quit completely, select **Quit** from the menu bar.
+- **Fastest way to lock:** Press **`Cmd + Option + L`**.
+- **Menu bar lock:** Click the `H0Ver` menu bar item and select **Lock Now** (or press `L` when the menu is open).
+- When unlocked, the lock screen disappears but the app stays running silently in the background.
 
 ## Configuration
 
-Select **Settings...** from the menu bar to open the Preferences window.
+Select **Settings...** from the menu bar to customize the app. H0Ver features a native, auto-layout Mac UI for flawless configuration.
 
 You can configure:
-- **Video Path:** Choose a local `.mp4`, `.mov`, or `.m4v` file.
-- **Password:** Set your unlock password (default is `hover`).
-- **Lockout (Max Attempts):** Number of incorrect password attempts before a cooldown is enforced.
-- **Lockout (Cooldown Duration):** Base cooldown time in seconds when locked out. Subsequent failed attempts will increase the lockout duration incrementally.
-
-### Configuration Priority Order
-
-1. **UserDefaults** (modified via the Settings UI)
-2. **`.env` file** (if present next to the executable, in project root, or working directory)
-3. **Environment variables**
-4. **Defaults**
-
-*(If you were using a `.env` file previously, its values will still be read if not overridden by the Settings UI).*
+- **Startup:** Toggle *Launch at Login*.
+- **Background:** Choose between `Video File` or `Liquid Gradient`.
+- **Clock Display:** Toggle 24-hour time, seconds, and date visibility.
+- **Custom Widget:** Type a message (e.g. "At Lunch") to display on the lock screen.
+- **Security:** Change your unlock password (requires entering your old password first to verify it's you).
+- **Lockout Options:** Configure the max failed attempts and the cooldown duration.
 
 ## Unlocking
 
-Type the password directly and press **Return**. No need to click the field.
+Type your password directly and press **Return**. No need to click the field.
 
 | Action | Shortcut |
 |---|---|
 | Submit password | Return |
-| Touch ID / system auth | Fn+T |
+| **Trigger Touch ID** | **Return** (when field is empty) or **Fn+T** |
 | Backspace | Delete last character |
 | Emergency quit (testing) | Esc ×5 or Cmd+Q |
 
 - Clicks, drags, swipes, and gestures are disabled while locked.
 - The password field has a frosted-glass blur effect over the video.
 - One overlay window per display, kept frontmost at screen-saver level.
-- Displays recreate automatically when screen parameters change.
-- A live clock and date are displayed on the lock screen.
-- After consecutive incorrect attempts, the password field displays a red border, blocks input, and shows a countdown timer.
-
-## Notes
-
-- The in-app password is for this app only — it is not your macOS login password unless you set it that way.
-- Touch ID uses Apple's `LocalAuthentication` framework with `.deviceOwnerAuthentication` policy.
 - Multi-monitor support is best-effort.

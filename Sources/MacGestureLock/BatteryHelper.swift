@@ -26,7 +26,7 @@ final class BatteryHelper {
                     percentage = p
                 }
                 
-                let isCharging = output.contains("AC Power") || output.contains("charging")
+                let isCharging = output.contains("'AC Power'") || (output.contains("charging") && !output.contains("discharging"))
                 return BatteryStatus(percentage: percentage, isCharging: isCharging)
             }
         } catch {
