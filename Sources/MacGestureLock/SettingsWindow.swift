@@ -1,11 +1,9 @@
 import AppKit
-
-// MARK: - SettingsWindowController
+import ServiceManagement
 
 @MainActor
 final class SettingsWindowController {
     static let shared = SettingsWindowController()
-
     private var window: NSWindow?
 
     func show() {
@@ -15,23 +13,16 @@ final class SettingsWindowController {
             return
         }
 
-        let contentHeight: CGFloat = 640
-        let windowHeight: CGFloat = 400
-
-        let settingsView = SettingsView(frame: NSRect(x: 0, y: 0, width: 480, height: contentHeight))
+        let settingsView = SettingsView()
         
-        let scrollView = NSScrollView(frame: NSRect(x: 0, y: 0, width: 480, height: windowHeight))
+        let scrollView = NSScrollView()
         scrollView.hasVerticalScroller = true
-        scrollView.hasHorizontalScroller = false
         scrollView.autohidesScrollers = true
-        scrollView.documentView = settingsView
         scrollView.drawsBackground = false
+        scrollView.documentView = settingsView
         
-        // Scroll to top
-        settingsView.scroll(NSPoint(x: 0, y: contentHeight))
-
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 480, height: windowHeight),
+            contentRect: NSRect(x: 0, y: 0, width: 500, height: 620),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered,
             defer: false
@@ -43,200 +34,226 @@ final class SettingsWindowController {
         window.level = .floating
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+        
+        // Crucial constraints for NSScrollView with Auto Layout documentView
+        settingsView.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            settingsView.widthAnchor.constraint(equalTo: scrollView.contentView.widthAnchor),
+            // The height of settingsView will be dictated by its internal stack view,
+            // but we bind the top anchor to the scroll view content so it scrolls properly.
+            settingsView.topAnchor.constraint(equalTo: scrollView.contentView.topAnchor)
+        ])
 
         self.window = window
     }
 }
 
-// MARK: - SettingsView
-
 @MainActor
 final class SettingsView: NSView {
+    override var isFlipped: Bool { true } // Vital for top-to-bottom layout in NSScrollView
+
+    // Fields
+    private let launchAtLoginCheckbox = NSButton(checkboxWithTitle: "Launch at login", target: nil, action: nil)
     private let videoPathField = NSTextField()
     private let browseButton = NSButton(title: "Browse...", target: nil, action: nil)
+    
     private let oldPasswordField = NSSecureTextField()
     private let passwordField = NSSecureTextField()
     private let confirmPasswordField = NSSecureTextField()
+    
     private let maxAttemptsField = NSTextField()
     private let maxAttemptsStepper = NSStepper()
     private let lockoutDurationPopup = NSPopUpButton()
-
+    
     private let clock24HourCheckbox = NSButton(checkboxWithTitle: "Use 24-hour time format", target: nil, action: nil)
     private let clockSecondsCheckbox = NSButton(checkboxWithTitle: "Show seconds", target: nil, action: nil)
     private let clockDateCheckbox = NSButton(checkboxWithTitle: "Show date", target: nil, action: nil)
-
+    
     private let brandingField = NSTextField()
-
+    
     private let saveButton = NSButton(title: "Save", target: nil, action: nil)
     private let statusLabel = NSTextField(labelWithString: "")
 
-    override init(frame frameRect: NSRect) {
-        super.init(frame: frameRect)
+    init() {
+        super.init(frame: .zero)
         setupUI()
         loadSettings()
     }
 
-    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+    required init?(coder: NSCoder) { fatalError() }
 
     private func setupUI() {
-        let padding: CGFloat = 24
-        let labelW: CGFloat = 130
-        let fieldX: CGFloat = padding + labelW + 8
-        let fieldW: CGFloat = bounds.width - fieldX - padding
-        var y: CGFloat = bounds.height - 50
+        let mainStack = NSStackView()
+        mainStack.orientation = .vertical
+        mainStack.alignment = .leading
+        mainStack.spacing = 20
+        mainStack.edgeInsets = NSEdgeInsets(top: 24, left: 24, bottom: 24, right: 24)
+        mainStack.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(mainStack)
+        
+        NSLayoutConstraint.activate([
+            mainStack.leadingAnchor.constraint(equalTo: leadingAnchor),
+            mainStack.trailingAnchor.constraint(equalTo: trailingAnchor),
+            mainStack.topAnchor.constraint(equalTo: topAnchor),
+            mainStack.bottomAnchor.constraint(equalTo: bottomAnchor)
+        ])
 
-        // ── Title ──
-        let title = NSTextField(labelWithString: "H0Ver Settings")
-        title.font = NSFont.systemFont(ofSize: 18, weight: .semibold)
-        title.frame = NSRect(x: padding, y: y, width: 200, height: 24)
-        addSubview(title)
-
-        y -= 14
-        let divider1 = makeDivider(y: y, width: bounds.width - 2 * padding, x: padding)
-        addSubview(divider1)
-
-        // ── Video Path ──
-        y -= 36
-        addSubview(makeLabel("Video Path", at: NSPoint(x: padding, y: y + 2)))
-
-        videoPathField.frame = NSRect(x: fieldX, y: y, width: fieldW - 90, height: 24)
+        // General Section
+        mainStack.addArrangedSubview(makeSectionTitle("General"))
+        
+        let videoStack = NSStackView(views: [videoPathField, browseButton])
+        videoStack.orientation = .horizontal
         videoPathField.placeholderString = "/path/to/video.mp4"
-        videoPathField.font = NSFont.systemFont(ofSize: 13)
-        videoPathField.lineBreakMode = .byTruncatingMiddle
-        addSubview(videoPathField)
-
-        browseButton.frame = NSRect(x: bounds.width - padding - 82, y: y - 1, width: 82, height: 26)
-        browseButton.bezelStyle = .rounded
-        browseButton.font = NSFont.systemFont(ofSize: 12)
+        videoPathField.widthAnchor.constraint(equalToConstant: 240).isActive = true
         browseButton.target = self
         browseButton.action = #selector(browseVideo)
-        addSubview(browseButton)
-
-        // ── Password ──
-        y -= 40
-        addSubview(makeLabel("Old Password", at: NSPoint(x: padding, y: y + 2)))
-
-        oldPasswordField.frame = NSRect(x: fieldX, y: y, width: fieldW, height: 24)
-        oldPasswordField.placeholderString = "Required to save changes"
-        oldPasswordField.font = NSFont.systemFont(ofSize: 13)
-        addSubview(oldPasswordField)
         
-        y -= 32
-        addSubview(makeLabel("New Password", at: NSPoint(x: padding, y: y + 2)))
+        let generalGrid = NSGridView(views: [
+            [makeLabel("Startup"), launchAtLoginCheckbox],
+            [makeLabel("Video Path"), videoStack]
+        ])
+        generalGrid.column(at: 0).xPlacement = .trailing
+        generalGrid.rowAlignment = .firstBaseline
+        mainStack.addArrangedSubview(generalGrid)
+        
+        mainStack.addArrangedSubview(makeDivider(for: mainStack))
 
-        passwordField.frame = NSRect(x: fieldX, y: y, width: fieldW, height: 24)
+        // Security Section
+        mainStack.addArrangedSubview(makeSectionTitle("Security"))
+        
+        oldPasswordField.placeholderString = "Required to save changes"
         passwordField.placeholderString = "Enter new password"
-        passwordField.font = NSFont.systemFont(ofSize: 13)
-        addSubview(passwordField)
-
-        y -= 32
-        addSubview(makeLabel("Confirm Password", at: NSPoint(x: padding, y: y + 2)))
-
-        confirmPasswordField.frame = NSRect(x: fieldX, y: y, width: fieldW, height: 24)
         confirmPasswordField.placeholderString = "Confirm password"
-        confirmPasswordField.font = NSFont.systemFont(ofSize: 13)
-        addSubview(confirmPasswordField)
+        
+        let pWidth: CGFloat = 250
+        oldPasswordField.widthAnchor.constraint(equalToConstant: pWidth).isActive = true
+        passwordField.widthAnchor.constraint(equalToConstant: pWidth).isActive = true
+        confirmPasswordField.widthAnchor.constraint(equalToConstant: pWidth).isActive = true
 
-        // ── Lockout Settings ──
-        y -= 44
-        let divider2 = makeDivider(y: y + 16, width: bounds.width - 2 * padding, x: padding)
-        addSubview(divider2)
+        let securityGrid = NSGridView(views: [
+            [makeLabel("Old Password"), oldPasswordField],
+            [makeLabel("New Password"), passwordField],
+            [makeLabel("Confirm Password"), confirmPasswordField]
+        ])
+        securityGrid.column(at: 0).xPlacement = .trailing
+        securityGrid.rowAlignment = .firstBaseline
+        mainStack.addArrangedSubview(securityGrid)
+        
+        mainStack.addArrangedSubview(makeDivider(for: mainStack))
 
-        let lockoutTitle = NSTextField(labelWithString: "Lockout")
-        lockoutTitle.font = NSFont.systemFont(ofSize: 14, weight: .medium)
-        lockoutTitle.frame = NSRect(x: padding, y: y - 4, width: 200, height: 20)
-        addSubview(lockoutTitle)
-
-        y -= 36
-        addSubview(makeLabel("Max Attempts", at: NSPoint(x: padding, y: y + 2)))
-
-        maxAttemptsField.frame = NSRect(x: fieldX, y: y, width: 50, height: 24)
-        maxAttemptsField.font = NSFont.systemFont(ofSize: 13)
-        maxAttemptsField.alignment = .center
+        // Lockout Section
+        mainStack.addArrangedSubview(makeSectionTitle("Lockout"))
+        
         maxAttemptsField.isEditable = false
-        addSubview(maxAttemptsField)
-
-        maxAttemptsStepper.frame = NSRect(x: fieldX + 54, y: y - 1, width: 19, height: 26)
+        maxAttemptsField.alignment = .center
+        maxAttemptsField.widthAnchor.constraint(equalToConstant: 40).isActive = true
+        
         maxAttemptsStepper.minValue = 3
         maxAttemptsStepper.maxValue = 10
         maxAttemptsStepper.increment = 1
         maxAttemptsStepper.target = self
         maxAttemptsStepper.action = #selector(stepperChanged)
-        addSubview(maxAttemptsStepper)
-
-        y -= 32
-        addSubview(makeLabel("Cooldown Duration", at: NSPoint(x: padding, y: y + 2)))
-
-        lockoutDurationPopup.frame = NSRect(x: fieldX, y: y - 2, width: 140, height: 28)
+        
+        let attemptsStack = NSStackView(views: [maxAttemptsField, maxAttemptsStepper])
+        attemptsStack.orientation = .horizontal
+        
         lockoutDurationPopup.addItems(withTitles: ["10 seconds", "30 seconds", "60 seconds", "120 seconds"])
-        lockoutDurationPopup.font = NSFont.systemFont(ofSize: 13)
-        addSubview(lockoutDurationPopup)
+        lockoutDurationPopup.widthAnchor.constraint(equalToConstant: 120).isActive = true
+        
+        let lockoutGrid = NSGridView(views: [
+            [makeLabel("Max Attempts"), attemptsStack],
+            [makeLabel("Cooldown"), lockoutDurationPopup]
+        ])
+        lockoutGrid.column(at: 0).xPlacement = .trailing
+        lockoutGrid.rowAlignment = .firstBaseline
+        mainStack.addArrangedSubview(lockoutGrid)
+        
+        mainStack.addArrangedSubview(makeDivider(for: mainStack))
 
-        // ── Clock Settings ──
-        y -= 44
-        let divider3 = makeDivider(y: y + 16, width: bounds.width - 2 * padding, x: padding)
-        addSubview(divider3)
-
-        let clockTitle = NSTextField(labelWithString: "Clock Display")
-        clockTitle.font = NSFont.systemFont(ofSize: 14, weight: .medium)
-        clockTitle.frame = NSRect(x: padding, y: y - 4, width: 200, height: 20)
-        addSubview(clockTitle)
-
-        y -= 30
-        clock24HourCheckbox.frame = NSRect(x: fieldX, y: y, width: fieldW, height: 20)
-        clock24HourCheckbox.font = NSFont.systemFont(ofSize: 13)
-        addSubview(clock24HourCheckbox)
-
-        y -= 26
-        clockSecondsCheckbox.frame = NSRect(x: fieldX, y: y, width: fieldW, height: 20)
-        clockSecondsCheckbox.font = NSFont.systemFont(ofSize: 13)
-        addSubview(clockSecondsCheckbox)
-
-        y -= 26
-        clockDateCheckbox.frame = NSRect(x: fieldX, y: y, width: fieldW, height: 20)
-        clockDateCheckbox.font = NSFont.systemFont(ofSize: 13)
-        addSubview(clockDateCheckbox)
-
-        // ── Branding ──
-        y -= 44
-        let divider4 = makeDivider(y: y + 16, width: bounds.width - 2 * padding, x: padding)
-        addSubview(divider4)
-
-        let brandingTitle = NSTextField(labelWithString: "Appearance")
-        brandingTitle.font = NSFont.systemFont(ofSize: 14, weight: .medium)
-        brandingTitle.frame = NSRect(x: padding, y: y - 4, width: 200, height: 20)
-        addSubview(brandingTitle)
-
-        y -= 36
-        addSubview(makeLabel("Fallback Text", at: NSPoint(x: padding, y: y + 2)))
-
-        brandingField.frame = NSRect(x: fieldX, y: y, width: fieldW, height: 24)
+        // Clock & Appearance Section
+        mainStack.addArrangedSubview(makeSectionTitle("Clock & Appearance"))
+        
+        let clockStack = NSStackView(views: [clock24HourCheckbox, clockSecondsCheckbox, clockDateCheckbox])
+        clockStack.orientation = .vertical
+        clockStack.alignment = .leading
+        
         brandingField.placeholderString = "H0Ver"
-        brandingField.font = NSFont.systemFont(ofSize: 13)
-        addSubview(brandingField)
-
-        // ── Save Button ──
-        y -= 50
-        let divider5 = makeDivider(y: y + 20, width: bounds.width - 2 * padding, x: padding)
-        addSubview(divider5)
-
-        saveButton.frame = NSRect(x: bounds.width - padding - 80, y: y - 6, width: 80, height: 30)
-        saveButton.bezelStyle = .rounded
+        brandingField.widthAnchor.constraint(equalToConstant: 250).isActive = true
+        
+        let appearanceGrid = NSGridView(views: [
+            [makeLabel("Clock Display"), clockStack],
+            [makeLabel("Fallback Text"), brandingField]
+        ])
+        appearanceGrid.column(at: 0).xPlacement = .trailing
+        appearanceGrid.rowAlignment = .firstBaseline
+        mainStack.addArrangedSubview(appearanceGrid)
+        
+        mainStack.addArrangedSubview(makeDivider(for: mainStack))
+        
+        // Footer (Status / Save)
+        let footerStack = NSStackView()
+        footerStack.orientation = .horizontal
+        
+        statusLabel.textColor = .secondaryLabelColor
+        statusLabel.font = .systemFont(ofSize: 12)
+        statusLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        
         saveButton.keyEquivalent = "\r"
-        saveButton.font = NSFont.systemFont(ofSize: 13, weight: .medium)
+        saveButton.bezelStyle = .rounded
         saveButton.target = self
         saveButton.action = #selector(save)
-        addSubview(saveButton)
-
-        statusLabel.frame = NSRect(x: padding, y: y - 2, width: bounds.width - padding * 2 - 90, height: 20)
-        statusLabel.font = NSFont.systemFont(ofSize: 12)
-        statusLabel.textColor = .secondaryLabelColor
-        addSubview(statusLabel)
+        
+        footerStack.addView(statusLabel, in: .leading)
+        footerStack.addView(saveButton, in: .trailing)
+        
+        // Ensure footer spans full width minus padding
+        footerStack.translatesAutoresizingMaskIntoConstraints = false
+        mainStack.addArrangedSubview(footerStack)
+        footerStack.widthAnchor.constraint(equalTo: mainStack.widthAnchor, constant: -48).isActive = true
+    }
+    
+    private func makeSectionTitle(_ text: String) -> NSTextField {
+        let label = NSTextField(labelWithString: text)
+        label.font = .systemFont(ofSize: 14, weight: .semibold)
+        return label
+    }
+    
+    private func makeLabel(_ text: String) -> NSTextField {
+        let label = NSTextField(labelWithString: text)
+        label.textColor = .secondaryLabelColor
+        return label
+    }
+    
+    private func makeDivider(for stack: NSStackView) -> NSBox {
+        let box = NSBox()
+        box.boxType = .separator
+        box.translatesAutoresizingMaskIntoConstraints = false
+        stack.addArrangedSubview(box)
+        box.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -48).isActive = true
+        return box
     }
 
-    // MARK: - Load/Save
-
+    @objc private func stepperChanged() {
+        maxAttemptsField.stringValue = "\(maxAttemptsStepper.integerValue)"
+    }
+    
+    @objc private func browseVideo() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowedContentTypes = [.movie, .video, .mpeg4Movie, .quickTimeMovie]
+        if panel.runModal() == .OK, let url = panel.url {
+            videoPathField.stringValue = url.path
+        }
+    }
+    
     private func loadSettings() {
+        if #available(macOS 13.0, *) {
+            launchAtLoginCheckbox.state = SMAppService.mainApp.status == .enabled ? .on : .off
+        } else {
+            launchAtLoginCheckbox.isHidden = true
+        }
+
         let defaults = UserDefaults.standard
         videoPathField.stringValue = defaults.string(forKey: "ScreensaverVideo") ?? ""
 
@@ -256,21 +273,38 @@ final class SettingsView: NSView {
         clock24HourCheckbox.state = defaults.bool(forKey: "ClockUse24Hour") ? .on : .off
         clockSecondsCheckbox.state = defaults.bool(forKey: "ClockShowSeconds") ? .on : .off
         
-        // Defaults to true for date if not set, check by registering default
         defaults.register(defaults: [
             "ClockShowDate": true,
             "BrandingText": "H0Ver"
         ])
         clockDateCheckbox.state = defaults.bool(forKey: "ClockShowDate") ? .on : .off
-
         brandingField.stringValue = defaults.string(forKey: "BrandingText") ?? "H0Ver"
     }
 
     @objc private func save() {
         statusLabel.textColor = .systemRed
 
-        // Check old password
-        let currentPassword = KeychainHelper.shared.readPassword()
+        // Launch at login
+        if #available(macOS 13.0, *) {
+            do {
+                if launchAtLoginCheckbox.state == .on {
+                    if SMAppService.mainApp.status != .enabled {
+                        try SMAppService.mainApp.register()
+                    }
+                } else {
+                    if SMAppService.mainApp.status == .enabled {
+                        try SMAppService.mainApp.unregister()
+                    }
+                }
+            } catch {
+                statusLabel.stringValue = "Failed to set login item."
+                return
+            }
+        }
+
+        let defaults = UserDefaults.standard
+        let currentPassword = defaults.string(forKey: "AppPassword")
+        
         if let current = currentPassword, !current.isEmpty {
             if oldPasswordField.stringValue != current {
                 statusLabel.stringValue = "Incorrect old password."
@@ -286,10 +320,8 @@ final class SettingsView: NSView {
                 statusLabel.stringValue = "New passwords do not match."
                 return
             }
-            KeychainHelper.shared.savePassword(newPass)
+            defaults.set(newPass, forKey: "AppPassword")
         }
-
-        let defaults = UserDefaults.standard
         
         let path = videoPathField.stringValue.trimmingCharacters(in: .whitespaces)
         if path.isEmpty {
@@ -302,68 +334,19 @@ final class SettingsView: NSView {
         let idx = lockoutDurationPopup.indexOfSelectedItem
         defaults.set(durations[idx], forKey: "LockoutDuration")
 
-        // Lockout
         defaults.set(maxAttemptsStepper.integerValue, forKey: "MaxAttempts")
-
-        // Clock
         defaults.set(clock24HourCheckbox.state == .on, forKey: "ClockUse24Hour")
         defaults.set(clockSecondsCheckbox.state == .on, forKey: "ClockShowSeconds")
         defaults.set(clockDateCheckbox.state == .on, forKey: "ClockShowDate")
+        
+        let text = brandingField.stringValue.trimmingCharacters(in: .whitespaces)
+        defaults.set(text.isEmpty ? "H0Ver" : text, forKey: "BrandingText")
 
-        // Branding
-        let branding = brandingField.stringValue.trimmingCharacters(in: .whitespaces)
-        defaults.set(branding.isEmpty ? "H0Ver" : branding, forKey: "BrandingText")
-
-        // Clear password fields
+        statusLabel.textColor = .systemGreen
+        statusLabel.stringValue = "Settings saved successfully!"
+        
+        oldPasswordField.stringValue = ""
         passwordField.stringValue = ""
         confirmPasswordField.stringValue = ""
-
-        statusLabel.stringValue = "Settings saved."
-        statusLabel.textColor = .systemGreen
-
-        // Clear after 2 seconds
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
-            self?.statusLabel.stringValue = ""
-        }
-    }
-
-    // MARK: - Actions
-
-    @objc private func browseVideo() {
-        let panel = NSOpenPanel()
-        panel.title = "Choose a video file"
-        panel.allowedContentTypes = [
-            .movie, .mpeg4Movie, .quickTimeMovie
-        ]
-        panel.canChooseDirectories = false
-        panel.canChooseFiles = true
-        panel.allowsMultipleSelection = false
-        panel.level = .modalPanel
-
-        if panel.runModal() == .OK, let url = panel.url {
-            videoPathField.stringValue = url.path
-        }
-    }
-
-    @objc private func stepperChanged() {
-        maxAttemptsField.stringValue = "\(maxAttemptsStepper.integerValue)"
-    }
-
-    // MARK: - Helpers
-
-    private func makeLabel(_ text: String, at origin: NSPoint) -> NSTextField {
-        let label = NSTextField(labelWithString: text)
-        label.font = NSFont.systemFont(ofSize: 13)
-        label.textColor = .secondaryLabelColor
-        label.frame = NSRect(x: origin.x, y: origin.y, width: 130, height: 20)
-        label.alignment = .right
-        return label
-    }
-
-    private func makeDivider(y: CGFloat, width: CGFloat, x: CGFloat) -> NSBox {
-        let box = NSBox()
-        box.boxType = .separator
-        box.frame = NSRect(x: x, y: y, width: width, height: 1)
-        return box
     }
 }

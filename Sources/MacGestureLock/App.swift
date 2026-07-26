@@ -19,13 +19,7 @@ struct Config {
             ?? env["VIDEO_PATH"]
             ?? ProcessInfo.processInfo.environment["SCREENSAVER_VIDEO"]
 
-        // Migrate old password if present, then read from Keychain
-        if let oldPassword = defaults.string(forKey: "AppPassword") {
-            KeychainHelper.shared.savePassword(oldPassword)
-            defaults.removeObject(forKey: "AppPassword")
-        }
-
-        let password = KeychainHelper.shared.readPassword()
+        let password = defaults.string(forKey: "AppPassword")
             ?? env["LOCK_PASSWORD"]
             ?? ProcessInfo.processInfo.environment["LOCK_PASSWORD"]
             ?? "hover"
