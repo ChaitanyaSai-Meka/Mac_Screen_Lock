@@ -74,6 +74,7 @@ final class SettingsView: NSView {
     private let brandingField = NSTextField()
     private let customMessageField = NSTextField()
     
+    private let checkUpdatesButton = NSButton(title: "Check for Updates...", target: nil, action: nil)
     private let saveButton = NSButton(title: "Save", target: nil, action: nil)
     private let statusLabel = NSTextField(labelWithString: "")
 
@@ -209,12 +210,20 @@ final class SettingsView: NSView {
         statusLabel.font = .systemFont(ofSize: 12)
         statusLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         
+        checkUpdatesButton.bezelStyle = .rounded
+        checkUpdatesButton.target = self
+        checkUpdatesButton.action = #selector(checkForUpdates)
+        
         saveButton.keyEquivalent = "\r"
         saveButton.bezelStyle = .rounded
         saveButton.target = self
         saveButton.action = #selector(save)
         
-        footerStack.addView(statusLabel, in: .leading)
+        let leftFooterStack = NSStackView(views: [checkUpdatesButton, statusLabel])
+        leftFooterStack.orientation = .horizontal
+        leftFooterStack.spacing = 10
+        
+        footerStack.addView(leftFooterStack, in: .leading)
         footerStack.addView(saveButton, in: .trailing)
         
         // Ensure footer spans full width minus padding
@@ -246,6 +255,10 @@ final class SettingsView: NSView {
 
     @objc private func stepperChanged() {
         maxAttemptsField.stringValue = "\(maxAttemptsStepper.integerValue)"
+    }
+    
+    @objc private func checkForUpdates() {
+        UpdateChecker.check(manual: true)
     }
     
     @objc private func browseVideo() {

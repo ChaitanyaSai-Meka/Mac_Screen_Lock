@@ -113,7 +113,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         installEventMonitors()
         NotificationCenter.default.addObserver(self, selector: #selector(screensChanged), name: NSApplication.didChangeScreenParametersNotification, object: nil)
         GlobalHotkeyManager.shared.register()
-        lock()
+        UpdateChecker.check(manual: false)
     }
     
     func lockScreen() {

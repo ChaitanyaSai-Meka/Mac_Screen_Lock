@@ -48,9 +48,9 @@ cat > "${CONTENTS_DIR}/Info.plist" <<EOF
     <key>CFBundleIdentifier</key>
     <string>com.h0ver.lockscreen</string>
     <key>CFBundleVersion</key>
-    <string>1.0</string>
+    <string>1.0.2</string>
     <key>CFBundleShortVersionString</key>
-    <string>1.0</string>
+    <string>1.0.2</string>
     <key>CFBundleIconFile</key>
     <string>AppIcon</string>
     <key>CFBundleExecutable</key>
