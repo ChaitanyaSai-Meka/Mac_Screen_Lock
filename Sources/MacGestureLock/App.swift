@@ -2,7 +2,6 @@ import AppKit
 import AVKit
 import LocalAuthentication
 
-// MARK: - Configuration
 
 struct Config {
     let videoPath: String?
@@ -10,7 +9,6 @@ struct Config {
     let maxAttempts: Int
     let lockoutBaseDuration: Int
 
-    /// Load config with priority: UserDefaults → .env file → environment variables → defaults
     static func load() -> Config {
         let env = loadDotEnv()
         let defaults = UserDefaults.standard
@@ -35,7 +33,6 @@ struct Config {
         )
     }
 
-    /// Parse .env file from the executable's directory or common locations
     private static func loadDotEnv() -> [String: String] {
         let candidates = [
             (ProcessInfo.processInfo.arguments.first.map { ($0 as NSString).deletingLastPathComponent } ?? ".") + "/.env",
@@ -73,7 +70,6 @@ struct Config {
     }
 }
 
-// MARK: - App Entry Point
 
 @main
 @MainActor
@@ -87,7 +83,6 @@ enum MacGestureLockMain {
     }
 }
 
-// MARK: - App Delegate
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
@@ -98,7 +93,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var keepFrontTimer: Timer?
     private var eventMonitors: [Any] = []
 
-    // Lockout state
     private var failedAttempts = 0
     private var lockedOut = false
     private var lockoutTimer: Timer?
@@ -339,7 +333,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         lockedOut = false
         failedAttempts = 0
 
-        // Fade out, stay in menu bar
         NSAnimationContext.runAnimationGroup({ context in
             context.duration = 0.3
             for window in self.windows {
@@ -358,17 +351,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 }
 
-// MARK: - KeyableWindow
 
-/// Borderless windows return false for canBecomeKey/canBecomeMain by default,
-/// which prevents them from receiving keyboard events.
 @MainActor
 final class KeyableWindow: NSWindow {
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { true }
 }
 
-// MARK: - LockView
 
 @MainActor
 final class LockView: NSView {
@@ -437,7 +426,6 @@ final class LockView: NSView {
     }
 
     override func keyDown(with event: NSEvent) {
-        // Block all input during lockout
         if isLockedOut?() == true { return }
 
         let key = event.charactersIgnoringModifiers?.lowercased()
@@ -498,9 +486,7 @@ final class LockView: NSView {
     }
 }
 
-// MARK: - OverlayView
 
-/// Transparent overlay that draws the lock UI above the video.
 @MainActor
 final class OverlayView: NSView {
     var status = "" { didSet { textLayer.updateUI() } }
@@ -594,9 +580,7 @@ final class OverlayView: NSView {
     }
 }
 
-// MARK: - PasswordTextView
 
-/// Draws clock, password text, and status on top of the glass view.
 @MainActor
 final class PasswordTextView: NSView {
     weak var overlay: OverlayView?
@@ -623,7 +607,6 @@ final class PasswordTextView: NSView {
     private var lastBatteryCheck = Date.distantPast
     private var cachedBattery: BatteryStatus?
     
-    // Hardware-accelerated labels
     private let timeLabel = NSTextField(labelWithString: "")
     private let dateLabel = NSTextField(labelWithString: "")
     private let batteryLabel = NSTextField(labelWithString: "")
@@ -656,11 +639,9 @@ final class PasswordTextView: NSView {
         cachedBrandingTextNeedsUpdate = true
     }
     
-    // Instead of drawRect, we just update the labels. This drops CPU usage to virtually zero.
     func updateUI() {
         guard let overlay else { return }
 
-        // -- Clock Settings --
         let defaults = UserDefaults.standard
         let use24Hour = defaults.bool(forKey: "ClockUse24Hour")
         let showSeconds = defaults.bool(forKey: "ClockShowSeconds")
@@ -681,7 +662,6 @@ final class PasswordTextView: NSView {
         let period = use24Hour ? "" : (" " + Self.periodFormatter.string(from: now))
         let date = Self.dateFormatter.string(from: now)
 
-        // Build a single attributed string for time + period
         let timeFont = NSFont.systemFont(ofSize: 84, weight: .thin)
         let clockStr = NSMutableAttributedString(
             string: time,
@@ -697,7 +677,6 @@ final class PasswordTextView: NSView {
         }
         timeLabel.attributedStringValue = clockStr
 
-        // Date
         if showDate {
             dateLabel.font = NSFont.systemFont(ofSize: 20, weight: .regular)
             dateLabel.textColor = NSColor(white: 0.6, alpha: 1.0)
@@ -707,7 +686,6 @@ final class PasswordTextView: NSView {
             dateLabel.isHidden = true
         }
         
-        // Battery
         if now.timeIntervalSince(lastBatteryCheck) > 60 || cachedBattery == nil {
             lastBatteryCheck = now
             cachedBattery = BatteryHelper.getStatus()
@@ -741,7 +719,6 @@ final class PasswordTextView: NSView {
             }
         }
         
-        // Branding / Custom Message
         if cachedBrandingTextNeedsUpdate {
             cachedBrandingText = defaults.string(forKey: "BrandingText") ?? "H0Ver"
             cachedCustomMessage = defaults.string(forKey: "CustomMessage")
@@ -767,7 +744,6 @@ final class PasswordTextView: NSView {
             brandingLabel.isHidden = true
         }
 
-        // Password Text
         passwordLabel.font = NSFont.systemFont(ofSize: overlay.passwordBuffer.isEmpty ? 12 : 18, weight: overlay.passwordBuffer.isEmpty ? .regular : .medium)
         if overlay.isLockedOut {
             passwordLabel.textColor = NSColor.systemRed.withAlphaComponent(0.8)
@@ -780,7 +756,6 @@ final class PasswordTextView: NSView {
             passwordLabel.stringValue = String(repeating: "•", count: overlay.passwordBuffer.count)
         }
 
-        // Status Text
         if !overlay.status.isEmpty {
             statusLabel.font = NSFont.systemFont(ofSize: 12, weight: .medium)
             statusLabel.textColor = overlay.statusColor

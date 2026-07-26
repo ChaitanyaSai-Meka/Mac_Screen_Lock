@@ -35,12 +35,9 @@ final class SettingsWindowController {
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
         
-        // Crucial constraints for NSScrollView with Auto Layout documentView
         settingsView.translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([
             settingsView.widthAnchor.constraint(equalTo: scrollView.contentView.widthAnchor),
-            // The height of settingsView will be dictated by its internal stack view,
-            // but we bind the top anchor to the scroll view content so it scrolls properly.
             settingsView.topAnchor.constraint(equalTo: scrollView.contentView.topAnchor)
         ])
 
@@ -52,7 +49,6 @@ final class SettingsWindowController {
 final class SettingsView: NSView {
     override var isFlipped: Bool { true } // Vital for top-to-bottom layout in NSScrollView
 
-    // Fields
     private let launchAtLoginCheckbox = NSButton(checkboxWithTitle: "Launch at login", target: nil, action: nil)
     private let videoPathField = NSTextField()
     private let browseButton = NSButton(title: "Browse...", target: nil, action: nil)
@@ -102,7 +98,6 @@ final class SettingsView: NSView {
             mainStack.bottomAnchor.constraint(equalTo: bottomAnchor)
         ])
 
-        // General Section
         mainStack.addArrangedSubview(makeSectionTitle("General"))
         
         let videoStack = NSStackView(views: [videoPathField, browseButton])
@@ -126,7 +121,6 @@ final class SettingsView: NSView {
         
         mainStack.addArrangedSubview(makeDivider(for: mainStack))
 
-        // Security Section
         mainStack.addArrangedSubview(makeSectionTitle("Security"))
         
         oldPasswordField.placeholderString = "Required to save changes"
@@ -149,7 +143,6 @@ final class SettingsView: NSView {
         
         mainStack.addArrangedSubview(makeDivider(for: mainStack))
 
-        // Lockout Section
         mainStack.addArrangedSubview(makeSectionTitle("Lockout"))
         
         maxAttemptsField.isEditable = false
@@ -178,7 +171,6 @@ final class SettingsView: NSView {
         
         mainStack.addArrangedSubview(makeDivider(for: mainStack))
 
-        // Clock & Appearance Section
         mainStack.addArrangedSubview(makeSectionTitle("Clock & Appearance"))
         
         let clockStack = NSStackView(views: [clock24HourCheckbox, clockSecondsCheckbox, clockDateCheckbox])
@@ -202,7 +194,6 @@ final class SettingsView: NSView {
         
         mainStack.addArrangedSubview(makeDivider(for: mainStack))
         
-        // Footer (Status / Save)
         let footerStack = NSStackView()
         footerStack.orientation = .horizontal
         
@@ -226,7 +217,6 @@ final class SettingsView: NSView {
         footerStack.addView(leftFooterStack, in: .leading)
         footerStack.addView(saveButton, in: .trailing)
         
-        // Ensure footer spans full width minus padding
         footerStack.translatesAutoresizingMaskIntoConstraints = false
         mainStack.addArrangedSubview(footerStack)
         footerStack.widthAnchor.constraint(equalTo: mainStack.widthAnchor, constant: -48).isActive = true
@@ -314,7 +304,6 @@ final class SettingsView: NSView {
     @objc private func save() {
         statusLabel.textColor = .systemRed
 
-        // Launch at login
         if #available(macOS 13.0, *) {
             do {
                 if launchAtLoginCheckbox.state == .on {

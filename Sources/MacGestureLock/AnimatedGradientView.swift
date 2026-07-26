@@ -5,7 +5,6 @@ import QuartzCore
 final class AnimatedGradientView: NSView {
     private let gradientLayer = CAGradientLayer()
     
-    // Some liquid-like modern gradient colors
     private let colorsets: [[CGColor]] = [
         [NSColor(red: 0.1, green: 0.0, blue: 0.2, alpha: 1.0).cgColor,
          NSColor(red: 0.3, green: 0.1, blue: 0.4, alpha: 1.0).cgColor,
@@ -50,7 +49,6 @@ final class AnimatedGradientView: NSView {
 
     private func animateGradient() {
         let animation = CAKeyframeAnimation(keyPath: "colors")
-        // Loop back to the first color to make the animation seamless
         animation.values = colorsets + [colorsets[0]]
         animation.duration = 12.0 // 4 seconds per color transition
         animation.repeatCount = .infinity

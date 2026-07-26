@@ -8,7 +8,6 @@ struct BatteryStatus {
 
 final class BatteryHelper {
     static func getStatus() -> BatteryStatus? {
-        // Fetch power sources from the macOS kernel directly (0 CPU cost)
         guard let blob = IOPSCopyPowerSourcesInfo()?.takeRetainedValue(),
               let list = IOPSCopyPowerSourcesList(blob)?.takeRetainedValue() as? [CFTypeRef],
               let firstSource = list.first,

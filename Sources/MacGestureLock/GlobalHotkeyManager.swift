@@ -9,8 +9,6 @@ final class GlobalHotkeyManager {
     func register() {
         let hotKeyID = EventHotKeyID(signature: OSType(fourCharCode("LCK1")), id: 1)
         
-        // 37 is 'L', cmdKey is 256, shiftKey is 512
-        // Carbon modifier flags: cmdKey = 1 << 8, shiftKey = 1 << 9
         let modifiers = UInt32(cmdKey | shiftKey)
         let keyCode = UInt32(37) // kVK_ANSI_L
         
@@ -23,7 +21,6 @@ final class GlobalHotkeyManager {
         var eventType = EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed))
         
         InstallEventHandler(GetEventDispatcherTarget(), { (nextHandler, theEvent, userData) -> OSStatus in
-            // Handle the hotkey
             Task { @MainActor in
                 if let delegate = NSApp.delegate as? AppDelegate {
                     delegate.lockScreen()

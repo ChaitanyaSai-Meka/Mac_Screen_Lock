@@ -19,7 +19,6 @@ final class UpdateChecker {
     static func check(manual: Bool) {
         let currentVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0.0"
         
-        // Add headers to satisfy GitHub API rate limits and User-Agent requirements
         var request = URLRequest(url: updateURL)
         request.setValue("H0Ver-Mac-App", forHTTPHeaderField: "User-Agent")
         
@@ -40,7 +39,6 @@ final class UpdateChecker {
             do {
                 let release = try JSONDecoder().decode(GitHubRelease.self, from: data)
                 
-                // GitHub tags often start with 'v' (e.g. "v1.1.0")
                 let remoteVersion = release.tagName.replacingOccurrences(of: "v", with: "")
                 
                 DispatchQueue.main.async {
