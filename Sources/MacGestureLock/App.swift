@@ -112,6 +112,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         makeMenuBarItem()
         installEventMonitors()
         NotificationCenter.default.addObserver(self, selector: #selector(screensChanged), name: NSApplication.didChangeScreenParametersNotification, object: nil)
+        GlobalHotkeyManager.shared.register()
+        lock()
+    }
+    
+    func lockScreen() {
         lock()
     }
 
@@ -147,7 +152,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func makeWindow(for screen: NSScreen) -> NSWindow {
-        let view = LockView(frame: screen.frame, videoURL: videoURL())
+        let mode = UserDefaults.standard.integer(forKey: "BackgroundMode")
+        let view = LockView(frame: screen.frame, videoURL: videoURL(), backgroundMode: mode)
         view.onAuthenticate = { [weak self] in self?.authenticateWithTouchID() }
         view.onPasswordSubmit = { [weak self] password in self?.validate(password: password) }
         view.onEmergencyQuit = { [weak self] in
@@ -370,12 +376,17 @@ final class LockView: NSView {
     private var hasVideo = false
     private let overlayView: OverlayView
 
-    init(frame frameRect: NSRect, videoURL: URL?) {
+    init(frame frameRect: NSRect, videoURL: URL?, backgroundMode: Int = 0) {
         overlayView = OverlayView(frame: NSRect(origin: .zero, size: frameRect.size))
         super.init(frame: frameRect)
         wantsLayer = true
 
-        if let videoURL {
+        if backgroundMode == 1 {
+            let gradientView = AnimatedGradientView(frame: bounds)
+            gradientView.autoresizingMask = [.width, .height]
+            addSubview(gradientView)
+            self.hasVideo = true
+        } else if let videoURL {
             let player = AVPlayer(url: videoURL)
             player.isMuted = false
             player.actionAtItemEnd = .none
@@ -604,7 +615,11 @@ final class PasswordTextView: NSView {
     private var lastUse24Hour: Bool?
     private var lastShowSeconds: Bool?
     private var cachedBrandingText: String?
+    private var cachedCustomMessage: String?
     private var cachedBrandingTextNeedsUpdate = true
+    
+    private var lastBatteryCheck = Date.distantPast
+    private var cachedBattery: BatteryStatus?
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -676,13 +691,55 @@ final class PasswordTextView: NSView {
             drawTextCentered(date, at: CGPoint(x: cx, y: clockY - 14), size: 20,
                              color: NSColor(white: 0.6, alpha: 1.0), weight: .regular)
         }
+        
+        // -- Widgets (Battery & Message) --
+        // Check battery every 60 seconds
+        if now.timeIntervalSince(lastBatteryCheck) > 60 {
+            lastBatteryCheck = now
+            cachedBattery = BatteryHelper.getStatus()
+        }
+        
+        var widgetY = clockY - (showDate ? 40 : 25)
+        
+        if let batt = cachedBattery {
+            let font = NSFont.systemFont(ofSize: 14, weight: .medium)
+            let color = NSColor(white: 0.8, alpha: 1.0)
+            let str = NSMutableAttributedString()
+            
+            let symbolName = batt.isCharging ? "battery.100.bolt" : (batt.percentage <= 20 ? "battery.25" : "battery.100")
+            if let image = NSImage(systemSymbolName: symbolName, accessibilityDescription: nil) {
+                let config = NSImage.SymbolConfiguration(pointSize: 13, weight: .medium)
+                if let tinted = image.withSymbolConfiguration(config) {
+                    tinted.isTemplate = true
+                    let attachment = NSTextAttachment()
+                    attachment.image = tinted
+                    attachment.bounds = CGRect(x: 0, y: -2, width: tinted.size.width, height: tinted.size.height)
+                    
+                    let imageStr = NSMutableAttributedString(attachment: attachment)
+                    imageStr.addAttributes([.foregroundColor: color], range: NSRange(location: 0, length: imageStr.length))
+                    str.append(imageStr)
+                    str.append(NSAttributedString(string: " ", attributes: [.font: font]))
+                }
+            }
+            
+            str.append(NSAttributedString(string: "\(batt.percentage)%", attributes: [.font: font, .foregroundColor: color]))
+            drawAttributedTextCentered(str, at: CGPoint(x: cx, y: widgetY))
+            widgetY -= 22
+        }
+        
+        if cachedBrandingTextNeedsUpdate {
+            cachedBrandingText = defaults.string(forKey: "BrandingText") ?? "H0Ver"
+            cachedCustomMessage = defaults.string(forKey: "CustomMessage")
+            cachedBrandingTextNeedsUpdate = false
+        }
+        
+        if let msg = cachedCustomMessage, !msg.isEmpty {
+            drawTextCentered(msg, at: CGPoint(x: cx, y: widgetY), size: 14,
+                             color: NSColor(white: 0.7, alpha: 1.0), weight: .medium)
+        }
 
         // -- Branding only when no video --
         if !overlay.hasVideo {
-            if cachedBrandingTextNeedsUpdate {
-                cachedBrandingText = defaults.string(forKey: "BrandingText") ?? "H0Ver"
-                cachedBrandingTextNeedsUpdate = false
-            }
             let text = cachedBrandingText ?? "H0Ver"
             drawTextCentered(text, at: CGPoint(x: cx, y: clockY + clockSize.height + 10), size: 16,
                              color: NSColor(white: 0.3, alpha: 1.0), weight: .medium)
@@ -713,6 +770,10 @@ final class PasswordTextView: NSView {
         let font = NSFont.systemFont(ofSize: size, weight: weight)
         let attrs: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: color]
         let str = NSAttributedString(string: text, attributes: attrs)
+        drawAttributedTextCentered(str, at: point)
+    }
+
+    private func drawAttributedTextCentered(_ str: NSAttributedString, at point: CGPoint) {
         let textWidth = str.size().width
         str.draw(at: CGPoint(x: point.x - textWidth / 2, y: point.y))
     }

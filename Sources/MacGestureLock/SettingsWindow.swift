@@ -65,11 +65,14 @@ final class SettingsView: NSView {
     private let maxAttemptsStepper = NSStepper()
     private let lockoutDurationPopup = NSPopUpButton()
     
+    private let backgroundModePopup = NSPopUpButton()
+    
     private let clock24HourCheckbox = NSButton(checkboxWithTitle: "Use 24-hour time format", target: nil, action: nil)
     private let clockSecondsCheckbox = NSButton(checkboxWithTitle: "Show seconds", target: nil, action: nil)
     private let clockDateCheckbox = NSButton(checkboxWithTitle: "Show date", target: nil, action: nil)
     
     private let brandingField = NSTextField()
+    private let customMessageField = NSTextField()
     
     private let saveButton = NSButton(title: "Save", target: nil, action: nil)
     private let statusLabel = NSTextField(labelWithString: "")
@@ -108,8 +111,12 @@ final class SettingsView: NSView {
         browseButton.target = self
         browseButton.action = #selector(browseVideo)
         
+        backgroundModePopup.addItems(withTitles: ["Video File", "Liquid Gradient"])
+        backgroundModePopup.widthAnchor.constraint(equalToConstant: 160).isActive = true
+        
         let generalGrid = NSGridView(views: [
             [makeLabel("Startup"), launchAtLoginCheckbox],
+            [makeLabel("Background"), backgroundModePopup],
             [makeLabel("Video Path"), videoStack]
         ])
         generalGrid.column(at: 0).xPlacement = .trailing
@@ -180,9 +187,13 @@ final class SettingsView: NSView {
         brandingField.placeholderString = "H0Ver"
         brandingField.widthAnchor.constraint(equalToConstant: 250).isActive = true
         
+        customMessageField.placeholderString = "Optional widget text (e.g. Back in 5 mins)"
+        customMessageField.widthAnchor.constraint(equalToConstant: 250).isActive = true
+        
         let appearanceGrid = NSGridView(views: [
             [makeLabel("Clock Display"), clockStack],
-            [makeLabel("Fallback Text"), brandingField]
+            [makeLabel("Fallback Text"), brandingField],
+            [makeLabel("Custom Widget"), customMessageField]
         ])
         appearanceGrid.column(at: 0).xPlacement = .trailing
         appearanceGrid.rowAlignment = .firstBaseline
@@ -275,10 +286,16 @@ final class SettingsView: NSView {
         
         defaults.register(defaults: [
             "ClockShowDate": true,
-            "BrandingText": "H0Ver"
+            "BrandingText": "H0Ver",
+            "BackgroundMode": 0
         ])
+        
+        let mode = defaults.integer(forKey: "BackgroundMode")
+        backgroundModePopup.selectItem(at: (mode >= 0 && mode < 2) ? mode : 0)
+        
         clockDateCheckbox.state = defaults.bool(forKey: "ClockShowDate") ? .on : .off
         brandingField.stringValue = defaults.string(forKey: "BrandingText") ?? "H0Ver"
+        customMessageField.stringValue = defaults.string(forKey: "CustomMessage") ?? ""
     }
 
     @objc private func save() {
@@ -330,6 +347,8 @@ final class SettingsView: NSView {
             defaults.set(path, forKey: "ScreensaverVideo")
         }
 
+        defaults.set(backgroundModePopup.indexOfSelectedItem, forKey: "BackgroundMode")
+
         let durations = [10, 30, 60, 120]
         let idx = lockoutDurationPopup.indexOfSelectedItem
         defaults.set(durations[idx], forKey: "LockoutDuration")
@@ -341,6 +360,13 @@ final class SettingsView: NSView {
         
         let text = brandingField.stringValue.trimmingCharacters(in: .whitespaces)
         defaults.set(text.isEmpty ? "H0Ver" : text, forKey: "BrandingText")
+        
+        let msg = customMessageField.stringValue.trimmingCharacters(in: .whitespaces)
+        if msg.isEmpty {
+            defaults.removeObject(forKey: "CustomMessage")
+        } else {
+            defaults.set(msg, forKey: "CustomMessage")
+        }
 
         statusLabel.textColor = .systemGreen
         statusLabel.stringValue = "Settings saved successfully!"
