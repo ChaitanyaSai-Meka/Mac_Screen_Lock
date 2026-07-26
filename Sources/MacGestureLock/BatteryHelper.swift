@@ -1,4 +1,5 @@
 import Foundation
+import IOKit.ps
 
 struct BatteryStatus {
     var percentage: Int
@@ -7,31 +8,17 @@ struct BatteryStatus {
 
 final class BatteryHelper {
     static func getStatus() -> BatteryStatus? {
-        let task = Process()
-        task.launchPath = "/usr/bin/pmset"
-        task.arguments = ["-g", "batt"]
-        
-        let pipe = Pipe()
-        task.standardOutput = pipe
-        
-        do {
-            try task.run()
-            let data = pipe.fileHandleForReading.readDataToEndOfFile()
-            if let output = String(data: data, encoding: .utf8) {
-                // Parse percentage
-                var percentage = 100
-                if let range = output.range(of: #"(\d+)%"#, options: .regularExpression),
-                   let percentStr = output[range].split(separator: "%").first,
-                   let p = Int(percentStr) {
-                    percentage = p
-                }
-                
-                let isCharging = output.contains("'AC Power'") || (output.contains("charging") && !output.contains("discharging"))
-                return BatteryStatus(percentage: percentage, isCharging: isCharging)
-            }
-        } catch {
+        // Fetch power sources from the macOS kernel directly (0 CPU cost)
+        guard let blob = IOPSCopyPowerSourcesInfo()?.takeRetainedValue(),
+              let list = IOPSCopyPowerSourcesList(blob)?.takeRetainedValue() as? [CFTypeRef],
+              let firstSource = list.first,
+              let info = IOPSGetPowerSourceDescription(blob, firstSource)?.takeUnretainedValue() as? [String: Any] else {
             return nil
         }
-        return nil
+        
+        let percentage = info[kIOPSCurrentCapacityKey] as? Int ?? 100
+        let isCharging = info[kIOPSIsChargingKey] as? Bool ?? false
+        
+        return BatteryStatus(percentage: percentage, isCharging: isCharging)
     }
 }

@@ -108,6 +108,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        UserDefaults.standard.register(defaults: [
+            "ClockShowDate": true,
+            "BrandingText": "H0Ver",
+            "BackgroundMode": 0
+        ])
         NSApplication.shared.setActivationPolicy(.accessory)
         makeMenuBarItem()
         installEventMonitors()
@@ -397,16 +402,18 @@ final class LockView: NSView {
             self.player = player
             self.playerLayer = layer
             self.hasVideo = true
-            NotificationCenter.default.addObserver(forName: .AVPlayerItemDidPlayToEndTime, object: player.currentItem, queue: .main) { [weak player] _ in
-                player?.seek(to: .zero)
-                player?.play()
-            }
+            NotificationCenter.default.addObserver(self, selector: #selector(playerDidFinishPlaying), name: .AVPlayerItemDidPlayToEndTime, object: player.currentItem)
             player.play()
         }
 
         overlayView.autoresizingMask = [.width, .height]
         overlayView.hasVideo = hasVideo
         addSubview(overlayView)
+    }
+
+    @objc private func playerDidFinishPlaying() {
+        player?.seek(to: .zero)
+        player?.play()
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
@@ -496,13 +503,13 @@ final class LockView: NSView {
 /// Transparent overlay that draws the lock UI above the video.
 @MainActor
 final class OverlayView: NSView {
-    var status = "" { didSet { textLayer.needsDisplay = true } }
-    var statusColor = NSColor.white { didSet { textLayer.needsDisplay = true } }
-    var passwordBuffer = "" { didSet { textLayer.needsDisplay = true } }
+    var status = "" { didSet { textLayer.updateUI() } }
+    var statusColor = NSColor.white { didSet { textLayer.updateUI() } }
+    var passwordBuffer = "" { didSet { textLayer.updateUI() } }
     var escapeCount = 0
-    var isFocused = false { didSet { updateGlassBorder(); textLayer.needsDisplay = true } }
-    var isLockedOut = false { didSet { updateGlassBorder(); textLayer.needsDisplay = true } }
-    var hasVideo = false
+    var isFocused = false { didSet { updateGlassBorder(); textLayer.updateUI() } }
+    var isLockedOut = false { didSet { updateGlassBorder(); textLayer.updateUI() } }
+    var hasVideo = false { didSet { textLayer.updateUI() } }
 
     private let glassView: NSVisualEffectView
     private let textLayer: PasswordTextView
@@ -551,7 +558,7 @@ final class OverlayView: NSView {
         let showSeconds = UserDefaults.standard.bool(forKey: "ClockShowSeconds")
         let interval: TimeInterval = showSeconds ? 1.0 : 30.0
         let timer = Timer(timeInterval: interval, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.textLayer.needsDisplay = true }
+            Task { @MainActor in self?.textLayer.updateUI() }
         }
         RunLoop.main.add(timer, forMode: .common)
         clockTimer = timer
@@ -594,12 +601,6 @@ final class OverlayView: NSView {
 final class PasswordTextView: NSView {
     weak var overlay: OverlayView?
 
-    private static let timeFormatter: DateFormatter = {
-        let f = DateFormatter()
-        f.dateFormat = "h:mm"
-        return f
-    }()
-
     private static let periodFormatter: DateFormatter = {
         let f = DateFormatter()
         f.dateFormat = "a"
@@ -621,11 +622,30 @@ final class PasswordTextView: NSView {
     
     private var lastBatteryCheck = Date.distantPast
     private var cachedBattery: BatteryStatus?
+    
+    // Hardware-accelerated labels
+    private let timeLabel = NSTextField(labelWithString: "")
+    private let dateLabel = NSTextField(labelWithString: "")
+    private let batteryLabel = NSTextField(labelWithString: "")
+    private let customMessageLabel = NSTextField(labelWithString: "")
+    private let brandingLabel = NSTextField(labelWithString: "")
+    private let passwordLabel = NSTextField(labelWithString: "")
+    private let statusLabel = NSTextField(labelWithString: "")
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         wantsLayer = true
         layer?.isOpaque = false
+        
+        let labels = [timeLabel, dateLabel, batteryLabel, customMessageLabel, brandingLabel, passwordLabel, statusLabel]
+        for label in labels {
+            label.alignment = .center
+            label.drawsBackground = false
+            label.isBordered = false
+            label.isEditable = false
+            label.isSelectable = false
+            addSubview(label)
+        }
         
         NotificationCenter.default.addObserver(self, selector: #selector(defaultsChanged), name: UserDefaults.didChangeNotification, object: nil)
     }
@@ -635,18 +655,15 @@ final class PasswordTextView: NSView {
     @objc private func defaultsChanged() {
         cachedBrandingTextNeedsUpdate = true
     }
-
-    override func draw(_ dirtyRect: NSRect) {
+    
+    // Instead of drawRect, we just update the labels. This drops CPU usage to virtually zero.
+    func updateUI() {
         guard let overlay else { return }
-        let cx = bounds.midX
-        let fieldY: CGFloat = 22
 
         // -- Clock Settings --
         let defaults = UserDefaults.standard
         let use24Hour = defaults.bool(forKey: "ClockUse24Hour")
         let showSeconds = defaults.bool(forKey: "ClockShowSeconds")
-        // Default true for date if not registered yet
-        defaults.register(defaults: ["ClockShowDate": true])
         let showDate = defaults.bool(forKey: "ClockShowDate")
 
         if lastUse24Hour != use24Hour || lastShowSeconds != showSeconds {
@@ -678,56 +695,53 @@ final class PasswordTextView: NSView {
                 attributes: [.font: periodFont, .foregroundColor: NSColor(white: 0.6, alpha: 1.0)]
             ))
         }
+        timeLabel.attributedStringValue = clockStr
 
-        let clockSize = clockStr.size()
-        let clockX = cx - clockSize.width / 2
-        var clockY = bounds.midY + 20
-        if !showDate {
-            clockY -= 10 // Shift down slightly if no date to keep visual balance
-        }
-        clockStr.draw(at: CGPoint(x: clockX, y: clockY))
-
-        // Date centered below
+        // Date
         if showDate {
-            drawTextCentered(date, at: CGPoint(x: cx, y: clockY - 14), size: 20,
-                             color: NSColor(white: 0.6, alpha: 1.0), weight: .regular)
+            dateLabel.font = NSFont.systemFont(ofSize: 20, weight: .regular)
+            dateLabel.textColor = NSColor(white: 0.6, alpha: 1.0)
+            dateLabel.stringValue = date
+            dateLabel.isHidden = false
+        } else {
+            dateLabel.isHidden = true
         }
         
-        // -- Widgets (Battery & Message) --
-        // Check battery every 60 seconds
-        if now.timeIntervalSince(lastBatteryCheck) > 60 {
+        // Battery
+        if now.timeIntervalSince(lastBatteryCheck) > 60 || cachedBattery == nil {
             lastBatteryCheck = now
             cachedBattery = BatteryHelper.getStatus()
-        }
-        
-        var widgetY = clockY - (showDate ? 40 : 25)
-        
-        if let batt = cachedBattery {
-            let font = NSFont.systemFont(ofSize: 14, weight: .medium)
-            let color = NSColor(white: 0.8, alpha: 1.0)
-            let str = NSMutableAttributedString()
             
-            let symbolName = batt.isCharging ? "battery.100.bolt" : (batt.percentage <= 20 ? "battery.25" : "battery.100")
-            if let image = NSImage(systemSymbolName: symbolName, accessibilityDescription: nil) {
-                let config = NSImage.SymbolConfiguration(pointSize: 13, weight: .medium)
-                if let tinted = image.withSymbolConfiguration(config) {
-                    tinted.isTemplate = true
-                    let attachment = NSTextAttachment()
-                    attachment.image = tinted
-                    attachment.bounds = CGRect(x: 0, y: -2, width: tinted.size.width, height: tinted.size.height)
-                    
-                    let imageStr = NSMutableAttributedString(attachment: attachment)
-                    imageStr.addAttributes([.foregroundColor: color], range: NSRange(location: 0, length: imageStr.length))
-                    str.append(imageStr)
-                    str.append(NSAttributedString(string: " ", attributes: [.font: font]))
+            if let batt = cachedBattery {
+                let font = NSFont.systemFont(ofSize: 14, weight: .medium)
+                let color = NSColor(white: 0.8, alpha: 1.0)
+                let str = NSMutableAttributedString()
+                
+                let symbolName = batt.isCharging ? "battery.100.bolt" : (batt.percentage <= 20 ? "battery.25" : "battery.100")
+                if let image = NSImage(systemSymbolName: symbolName, accessibilityDescription: nil) {
+                    let config = NSImage.SymbolConfiguration(pointSize: 13, weight: .medium)
+                    if let tinted = image.withSymbolConfiguration(config) {
+                        tinted.isTemplate = true
+                        let attachment = NSTextAttachment()
+                        attachment.image = tinted
+                        attachment.bounds = CGRect(x: 0, y: -2, width: tinted.size.width, height: tinted.size.height)
+                        
+                        let imageStr = NSMutableAttributedString(attachment: attachment)
+                        imageStr.addAttributes([.foregroundColor: color], range: NSRange(location: 0, length: imageStr.length))
+                        str.append(imageStr)
+                        str.append(NSAttributedString(string: " ", attributes: [.font: font]))
+                    }
                 }
+                
+                str.append(NSAttributedString(string: "\(batt.percentage)%", attributes: [.font: font, .foregroundColor: color]))
+                batteryLabel.attributedStringValue = str
+                batteryLabel.isHidden = false
+            } else {
+                batteryLabel.isHidden = true
             }
-            
-            str.append(NSAttributedString(string: "\(batt.percentage)%", attributes: [.font: font, .foregroundColor: color]))
-            drawAttributedTextCentered(str, at: CGPoint(x: cx, y: widgetY))
-            widgetY -= 22
         }
         
+        // Branding / Custom Message
         if cachedBrandingTextNeedsUpdate {
             cachedBrandingText = defaults.string(forKey: "BrandingText") ?? "H0Ver"
             cachedCustomMessage = defaults.string(forKey: "CustomMessage")
@@ -735,47 +749,90 @@ final class PasswordTextView: NSView {
         }
         
         if let msg = cachedCustomMessage, !msg.isEmpty {
-            drawTextCentered(msg, at: CGPoint(x: cx, y: widgetY), size: 14,
-                             color: NSColor(white: 0.7, alpha: 1.0), weight: .medium)
+            customMessageLabel.font = NSFont.systemFont(ofSize: 14, weight: .medium)
+            customMessageLabel.textColor = NSColor(white: 0.7, alpha: 1.0)
+            customMessageLabel.stringValue = msg
+            customMessageLabel.isHidden = false
+        } else {
+            customMessageLabel.isHidden = true
         }
 
-        // -- Branding only when no video --
         if !overlay.hasVideo {
             let text = cachedBrandingText ?? "H0Ver"
-            drawTextCentered(text, at: CGPoint(x: cx, y: clockY + clockSize.height + 10), size: 16,
-                             color: NSColor(white: 0.3, alpha: 1.0), weight: .medium)
-        }
-
-        // -- Password text inside the glass pill --
-        if overlay.isLockedOut {
-            drawTextCentered("Locked", at: CGPoint(x: cx, y: fieldY + 9), size: 14,
-                             color: NSColor.systemRed.withAlphaComponent(0.8), weight: .medium)
-        } else if overlay.passwordBuffer.isEmpty {
-            drawTextCentered("Press Return for Touch ID", at: CGPoint(x: cx, y: fieldY + 9), size: 12,
-                             color: NSColor(white: 0.55, alpha: 1.0), weight: .regular)
+            brandingLabel.font = NSFont.systemFont(ofSize: 16, weight: .medium)
+            brandingLabel.textColor = NSColor(white: 0.3, alpha: 1.0)
+            brandingLabel.stringValue = text
+            brandingLabel.isHidden = false
         } else {
-            let bullets = String(repeating: "•", count: overlay.passwordBuffer.count)
-            drawTextCentered(bullets, at: CGPoint(x: cx, y: fieldY + 7), size: 18,
-                             color: .white, weight: .medium)
+            brandingLabel.isHidden = true
         }
 
-        // -- Status --
+        // Password Text
+        passwordLabel.font = NSFont.systemFont(ofSize: overlay.passwordBuffer.isEmpty ? 12 : 18, weight: overlay.passwordBuffer.isEmpty ? .regular : .medium)
+        if overlay.isLockedOut {
+            passwordLabel.textColor = NSColor.systemRed.withAlphaComponent(0.8)
+            passwordLabel.stringValue = "Locked"
+        } else if overlay.passwordBuffer.isEmpty {
+            passwordLabel.textColor = NSColor(white: 0.55, alpha: 1.0)
+            passwordLabel.stringValue = "Press Return for Touch ID"
+        } else {
+            passwordLabel.textColor = .white
+            passwordLabel.stringValue = String(repeating: "•", count: overlay.passwordBuffer.count)
+        }
+
+        // Status Text
         if !overlay.status.isEmpty {
-            drawTextCentered(overlay.status, at: CGPoint(x: cx, y: fieldY + 36 + 10), size: 12,
-                             color: overlay.statusColor, weight: .medium)
+            statusLabel.font = NSFont.systemFont(ofSize: 12, weight: .medium)
+            statusLabel.textColor = overlay.statusColor
+            statusLabel.stringValue = overlay.status
+            statusLabel.isHidden = false
+        } else {
+            statusLabel.isHidden = true
         }
+        
+        needsLayout = true
     }
 
-    private func drawTextCentered(_ text: String, at point: CGPoint, size: CGFloat,
-                                  color: NSColor = .white, weight: NSFont.Weight = .regular) {
-        let font = NSFont.systemFont(ofSize: size, weight: weight)
-        let attrs: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: color]
-        let str = NSAttributedString(string: text, attributes: attrs)
-        drawAttributedTextCentered(str, at: point)
-    }
-
-    private func drawAttributedTextCentered(_ str: NSAttributedString, at point: CGPoint) {
-        let textWidth = str.size().width
-        str.draw(at: CGPoint(x: point.x - textWidth / 2, y: point.y))
+    override func layout() {
+        super.layout()
+        let cx = bounds.midX
+        let fieldY: CGFloat = 22
+        
+        timeLabel.sizeToFit()
+        var clockY = bounds.midY + 20
+        if dateLabel.isHidden { clockY -= 10 }
+        timeLabel.frame = NSRect(x: cx - timeLabel.bounds.width / 2, y: clockY, width: timeLabel.bounds.width, height: timeLabel.bounds.height)
+        
+        if !dateLabel.isHidden {
+            dateLabel.sizeToFit()
+            dateLabel.frame = NSRect(x: cx - dateLabel.bounds.width / 2, y: clockY - 14, width: dateLabel.bounds.width, height: dateLabel.bounds.height)
+        }
+        
+        var widgetY = clockY - (!dateLabel.isHidden ? 40 : 25)
+        
+        if !batteryLabel.isHidden {
+            batteryLabel.sizeToFit()
+            batteryLabel.frame = NSRect(x: cx - batteryLabel.bounds.width / 2, y: widgetY, width: batteryLabel.bounds.width, height: batteryLabel.bounds.height)
+            widgetY -= 22
+        }
+        
+        if !customMessageLabel.isHidden {
+            customMessageLabel.sizeToFit()
+            customMessageLabel.frame = NSRect(x: cx - customMessageLabel.bounds.width / 2, y: widgetY, width: customMessageLabel.bounds.width, height: customMessageLabel.bounds.height)
+        }
+        
+        if !brandingLabel.isHidden {
+            brandingLabel.sizeToFit()
+            brandingLabel.frame = NSRect(x: cx - brandingLabel.bounds.width / 2, y: clockY + timeLabel.bounds.height + 10, width: brandingLabel.bounds.width, height: brandingLabel.bounds.height)
+        }
+        
+        passwordLabel.sizeToFit()
+        let pwdY = fieldY + ((overlay?.isLockedOut ?? false) ? 9 : ((overlay?.passwordBuffer.isEmpty ?? true) ? 9 : 7))
+        passwordLabel.frame = NSRect(x: cx - passwordLabel.bounds.width / 2, y: pwdY, width: passwordLabel.bounds.width, height: passwordLabel.bounds.height)
+        
+        if !statusLabel.isHidden {
+            statusLabel.sizeToFit()
+            statusLabel.frame = NSRect(x: cx - statusLabel.bounds.width / 2, y: fieldY + 36 + 10, width: statusLabel.bounds.width, height: statusLabel.bounds.height)
+        }
     }
 }
