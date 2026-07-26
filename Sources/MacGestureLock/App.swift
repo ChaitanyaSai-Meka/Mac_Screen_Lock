@@ -268,6 +268,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func validate(password: String) {
         guard !windows.isEmpty, !lockedOut else { return }
 
+        if password.isEmpty {
+            authenticateWithTouchID()
+            return
+        }
+
         if password == config.appPassword {
             failedAttempts = 0
             performUnlock()
@@ -450,6 +455,10 @@ final class LockView: NSView {
     func clearPassword() {
         overlayView.passwordBuffer = ""
         overlayView.isFocused = false
+    }
+
+    var isPasswordEmpty: Bool {
+        return overlayView.passwordBuffer.isEmpty
     }
 
     func setLockedOut(_ locked: Bool) {
@@ -660,7 +669,7 @@ final class PasswordTextView: NSView {
             drawTextCentered("Locked", at: CGPoint(x: cx, y: fieldY + 9), size: 14,
                              color: NSColor.systemRed.withAlphaComponent(0.8), weight: .medium)
         } else if overlay.passwordBuffer.isEmpty {
-            drawTextCentered("Password", at: CGPoint(x: cx, y: fieldY + 9), size: 14,
+            drawTextCentered("Press Return for Touch ID", at: CGPoint(x: cx, y: fieldY + 9), size: 12,
                              color: NSColor(white: 0.55, alpha: 1.0), weight: .regular)
         } else {
             let bullets = String(repeating: "•", count: overlay.passwordBuffer.count)

@@ -15,16 +15,29 @@ final class SettingsWindowController {
             return
         }
 
-        let contentView = SettingsView(frame: NSRect(x: 0, y: 0, width: 480, height: 540))
+        let contentHeight: CGFloat = 540
+        let windowHeight: CGFloat = 400
+
+        let settingsView = SettingsView(frame: NSRect(x: 0, y: 0, width: 480, height: contentHeight))
+        
+        let scrollView = NSScrollView(frame: NSRect(x: 0, y: 0, width: 480, height: windowHeight))
+        scrollView.hasVerticalScroller = true
+        scrollView.hasHorizontalScroller = false
+        scrollView.autohidesScrollers = true
+        scrollView.documentView = settingsView
+        scrollView.drawsBackground = false
+        
+        // Scroll to top
+        settingsView.scroll(NSPoint(x: 0, y: contentHeight))
 
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 480, height: 540),
-            styleMask: [.titled, .closable],
+            contentRect: NSRect(x: 0, y: 0, width: 480, height: windowHeight),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered,
             defer: false
         )
         window.title = "H0Ver Settings"
-        window.contentView = contentView
+        window.contentView = scrollView
         window.center()
         window.isReleasedWhenClosed = false
         window.level = .floating

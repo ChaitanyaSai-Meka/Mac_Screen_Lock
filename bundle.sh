@@ -29,6 +29,11 @@ if [ -f ".env" ]; then
     cp ".env" "${MACOS_DIR}/.env"
 fi
 
+# Copy icon if it exists
+if [ -f "AppIcon.icns" ]; then
+    cp "AppIcon.icns" "${RESOURCES_DIR}/AppIcon.icns"
+fi
+
 # Create Info.plist
 cat > "${CONTENTS_DIR}/Info.plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
@@ -46,6 +51,8 @@ cat > "${CONTENTS_DIR}/Info.plist" <<EOF
     <string>1.0</string>
     <key>CFBundleShortVersionString</key>
     <string>1.0</string>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
     <key>CFBundleExecutable</key>
     <string>${EXECUTABLE}</string>
     <key>CFBundlePackageType</key>
