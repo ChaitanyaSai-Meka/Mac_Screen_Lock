@@ -119,7 +119,7 @@ final class SettingsView: NSView {
         generalGrid.rowAlignment = .firstBaseline
         mainStack.addArrangedSubview(generalGrid)
         
-        mainStack.addArrangedSubview(makeDivider(for: mainStack))
+        makeDivider(for: mainStack)
 
         mainStack.addArrangedSubview(makeSectionTitle("Security"))
         
@@ -141,7 +141,7 @@ final class SettingsView: NSView {
         securityGrid.rowAlignment = .firstBaseline
         mainStack.addArrangedSubview(securityGrid)
         
-        mainStack.addArrangedSubview(makeDivider(for: mainStack))
+        makeDivider(for: mainStack)
 
         mainStack.addArrangedSubview(makeSectionTitle("Lockout"))
         
@@ -169,7 +169,7 @@ final class SettingsView: NSView {
         lockoutGrid.rowAlignment = .firstBaseline
         mainStack.addArrangedSubview(lockoutGrid)
         
-        mainStack.addArrangedSubview(makeDivider(for: mainStack))
+        makeDivider(for: mainStack)
 
         mainStack.addArrangedSubview(makeSectionTitle("Clock & Appearance"))
         
@@ -192,7 +192,7 @@ final class SettingsView: NSView {
         appearanceGrid.rowAlignment = .firstBaseline
         mainStack.addArrangedSubview(appearanceGrid)
         
-        mainStack.addArrangedSubview(makeDivider(for: mainStack))
+        makeDivider(for: mainStack)
         
         let footerStack = NSStackView()
         footerStack.orientation = .horizontal
@@ -234,6 +234,7 @@ final class SettingsView: NSView {
         return label
     }
     
+    @discardableResult
     private func makeDivider(for stack: NSStackView) -> NSBox {
         let box = NSBox()
         box.boxType = .separator
@@ -353,7 +354,9 @@ final class SettingsView: NSView {
 
         let durations = [10, 30, 60, 120]
         let idx = lockoutDurationPopup.indexOfSelectedItem
-        defaults.set(durations[idx], forKey: "LockoutDuration")
+        if idx >= 0 && idx < durations.count {
+            defaults.set(durations[idx], forKey: "LockoutDuration")
+        }
 
         defaults.set(maxAttemptsStepper.integerValue, forKey: "MaxAttempts")
         defaults.set(clock24HourCheckbox.state == .on, forKey: "ClockUse24Hour")

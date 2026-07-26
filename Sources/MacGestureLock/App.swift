@@ -1,8 +1,6 @@
 import AppKit
 import AVKit
 import LocalAuthentication
-
-
 struct Config {
     let videoPath: String?
     let appPassword: String
@@ -69,8 +67,6 @@ struct Config {
         return [:]
     }
 }
-
-
 @main
 @MainActor
 enum MacGestureLockMain {
@@ -82,14 +78,13 @@ enum MacGestureLockMain {
         app.run()
     }
 }
-
-
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var windows: [NSWindow] = []
     private var statusItem: NSStatusItem?
     private var config = Config.load()
     private var authenticationInProgress = false
+    private var authContext: LAContext?
     private var keepFrontTimer: Timer?
     private var eventMonitors: [Any] = []
 
@@ -98,7 +93,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var lockoutTimer: Timer?
     private var maxAttempts: Int { config.maxAttempts }
     private var lockoutDuration: TimeInterval {
-        Double(config.lockoutBaseDuration) * Double(min(failedAttempts - maxAttempts + 1, 6))
+        Double(config.lockoutBaseDuration) * Double(max(min(failedAttempts - maxAttempts + 1, 6), 1))
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -155,6 +150,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let mode = UserDefaults.standard.integer(forKey: "BackgroundMode")
         let view = LockView(frame: screen.frame, videoURL: videoURL(), backgroundMode: mode)
         view.onAuthenticate = { [weak self] in self?.authenticateWithTouchID() }
+        view.onCancelTouchID = { [weak self] in self?.cancelTouchID() }
         view.onPasswordSubmit = { [weak self] password in self?.validate(password: password) }
         view.onEmergencyQuit = { [weak self] in
             self?.restorePresentationOptions()
@@ -244,11 +240,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         setStatus("Waiting for Touch ID...", color: NSColor.systemCyan)
 
         let context = LAContext()
+        authContext = context
         context.localizedCancelTitle = "Stay Locked"
         context.localizedFallbackTitle = "Enter Mac Password"
         var error: NSError?
         guard context.canEvaluatePolicy(.deviceOwnerAuthentication, error: &error) else {
             authenticationInProgress = false
+            authContext = nil
             setStatus("Biometrics unavailable", color: NSColor.systemRed)
             reassertFirstResponder()
             return
@@ -257,7 +255,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         context.evaluatePolicy(.deviceOwnerAuthentication, localizedReason: "Unlock H0Ver screen") { [weak self] success, authError in
             DispatchQueue.main.async {
                 guard let self else { return }
+                // If authentication is no longer in progress, it was cancelled by typing
+                guard self.authenticationInProgress else { return }
+                
                 self.authenticationInProgress = false
+                self.authContext = nil
+                
                 if success {
                     self.performUnlock()
                 } else {
@@ -266,6 +269,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     self.reassertOverlay()
                 }
             }
+        }
+    }
+    
+    private func cancelTouchID() {
+        if authenticationInProgress {
+            authContext?.invalidate()
+            authContext = nil
+            authenticationInProgress = false
+            setStatus("", color: .white)
         }
     }
 
@@ -309,7 +321,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         lockoutTimer?.invalidate()
         let timer = Timer(timeInterval: 1.0, repeats: true) { [weak self] _ in
-            DispatchQueue.main.async {
+            Task { @MainActor in
                 guard let self else { return }
                 self.lockoutRemaining -= 1
                 if self.lockoutRemaining <= 0 {
@@ -350,18 +362,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         })
     }
 }
-
-
 @MainActor
 final class KeyableWindow: NSWindow {
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { true }
 }
-
-
 @MainActor
 final class LockView: NSView {
     var onAuthenticate: (() -> Void)?
+    var onCancelTouchID: (() -> Void)?
     var onPasswordSubmit: ((String) -> Void)?
     var onEmergencyQuit: (() -> Void)?
     var isLockedOut: (() -> Bool)?
@@ -446,13 +455,17 @@ final class LockView: NSView {
             overlayView.isFocused = !overlayView.passwordBuffer.isEmpty
             setStatus("", color: .white)
         } else if event.keyCode == 53 {
+            onCancelTouchID?()
             overlayView.escapeCount += 1
             setStatus("Emergency quit: Esc x\(max(0, 5 - overlayView.escapeCount)) more", color: NSColor.systemOrange)
             if overlayView.escapeCount >= 5 { onEmergencyQuit?() }
         } else if let chars = event.characters, !chars.isEmpty,
                   !modifiers.contains(.command), !modifiers.contains(.control) {
+            onCancelTouchID?()
             overlayView.escapeCount = 0
-            overlayView.passwordBuffer.append(contentsOf: chars)
+            if overlayView.passwordBuffer.count < 128 {
+                overlayView.passwordBuffer.append(contentsOf: chars)
+            }
             overlayView.isFocused = true
             setStatus("", color: .white)
         }
@@ -467,11 +480,6 @@ final class LockView: NSView {
         overlayView.passwordBuffer = ""
         overlayView.isFocused = false
     }
-
-    var isPasswordEmpty: Bool {
-        return overlayView.passwordBuffer.isEmpty
-    }
-
     func setLockedOut(_ locked: Bool) {
         overlayView.isLockedOut = locked
     }
@@ -485,8 +493,6 @@ final class LockView: NSView {
         clearPassword()
     }
 }
-
-
 @MainActor
 final class OverlayView: NSView {
     var status = "" { didSet { textLayer.updateUI() } }
@@ -579,8 +585,6 @@ final class OverlayView: NSView {
         }
     }
 }
-
-
 @MainActor
 final class PasswordTextView: NSView {
     weak var overlay: OverlayView?
