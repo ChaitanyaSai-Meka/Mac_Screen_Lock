@@ -124,7 +124,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         statusItem?.button?.title = "H0Ver"
         let menu = NSMenu()
-        menu.addItem(withTitle: "Lock Now", action: #selector(lockFromMenu), keyEquivalent: "l")
+        let lockItem = menu.addItem(withTitle: "Lock Now", action: #selector(lockFromMenu), keyEquivalent: "L")
+        lockItem.keyEquivalentModifierMask = [.command, .shift]
         menu.addItem(.separator())
         menu.addItem(withTitle: "Settings...", action: #selector(openSettings), keyEquivalent: ",")
         menu.addItem(.separator())

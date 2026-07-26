@@ -5,7 +5,7 @@ A premium macOS utility that overlays a full-screen video or an animated liquid 
 ## Features ✨
 
 - **Beautiful Backgrounds**: Choose between a custom looping video (`.mp4`, `.mov`) or a buttery smooth "Liquid Gradient" (powered by CoreAnimation).
-- **Global Hotkey**: Press **`Cmd + Option + L`** from *anywhere* on your Mac to instantly lock your screen.
+- **Global Hotkey**: Press **`Cmd + Shift + L`** from *anywhere* on your Mac to instantly lock your screen.
 - **Lock Screen Widgets**: Displays a live Battery percentage using native SF Symbols, plus an optional Custom Message right below the clock.
 - **Touch ID Integration**: Press **Return** when the password field is empty to instantly invoke macOS Touch ID to unlock.
 - **Launch at Login**: Automatically start H0Ver securely in the background when you boot your Mac.
@@ -16,9 +16,21 @@ A premium macOS utility that overlays a full-screen video or an animated liquid 
 
 This is an app-level overlay, **not** a replacement for macOS LoginWindow, FileVault, or the system lock screen. A privileged user or someone with physical access may still bypass or quit the app. Keep normal macOS security enabled.
 
-## Build and Install
+## Installation (Direct Download)
 
-To build the app bundle, use the provided script:
+If you downloaded the pre-compiled `H0Ver.app.zip`:
+
+1. Extract the `.zip` file.
+2. Open your terminal and remove the macOS quarantine attribute by running:
+   ```bash
+   xattr -r -c /path/to/H0Ver.app
+   ```
+3. Drag `H0Ver.app` into your `/Applications/` folder.
+4. Launch the app!
+
+## Build from Source
+
+To build the app bundle from source, use the provided script:
 
 ```bash
 ./bundle.sh
@@ -38,7 +50,7 @@ cp -r H0Ver.app /Applications/
 
 Once launched, H0Ver lives in your menu bar (as a menu bar extra). It does not appear in your Dock.
 
-- **Fastest way to lock:** Press **`Cmd + Option + L`**.
+- **Fastest way to lock:** Press **`Cmd + Shift + L`**.
 - **Menu bar lock:** Click the `H0Ver` menu bar item and select **Lock Now** (or press `L` when the menu is open).
 - When unlocked, the lock screen disappears but the app stays running silently in the background.
 
