@@ -83,8 +83,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var windows: [NSWindow] = []
     private var statusItem: NSStatusItem?
     private var config = Config.load()
-    private var authenticationInProgress = false
     private var authContext: LAContext?
+    private var authenticationInProgress = false {
+        didSet {
+            if oldValue && !authenticationInProgress {
+                authContext?.invalidate()
+                authContext = nil
+            }
+        }
+    }
     private var keepFrontTimer: Timer?
     private var eventMonitors: [Any] = []
 
@@ -108,6 +115,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NotificationCenter.default.addObserver(self, selector: #selector(screensChanged), name: NSApplication.didChangeScreenParametersNotification, object: nil)
         BatteryHelper.startMonitoring()
         NotificationCenter.default.addObserver(self, selector: #selector(batteryStatusChanged), name: NSNotification.Name("BatteryStatusChanged"), object: nil)
+        MediaHelper.startMonitoring()
         NSWorkspace.shared.notificationCenter.addObserver(self, selector: #selector(reassertOverlay), name: NSWorkspace.didActivateApplicationNotification, object: nil)
         GlobalHotkeyManager.shared.register()
     }
@@ -485,8 +493,9 @@ final class LockView: NSView {
                   !modifiers.contains(.command), !modifiers.contains(.control) {
             onCancelTouchID?()
             overlayView.escapeCount = 0
-            if overlayView.passwordBuffer.count < 128 {
-                overlayView.passwordBuffer.append(contentsOf: chars)
+            let remaining = 128 - overlayView.passwordBuffer.count
+            if remaining > 0 {
+                overlayView.passwordBuffer.append(contentsOf: chars.prefix(remaining))
             }
             overlayView.isFocused = true
             setStatus("", color: .white)
@@ -646,6 +655,7 @@ final class PasswordTextView: NSView {
     private let batteryLabel = NSTextField(labelWithString: "")
     private let customMessageLabel = NSTextField(labelWithString: "")
     private let brandingLabel = NSTextField(labelWithString: "")
+    private let mediaLabel = NSTextField(labelWithString: "")
     private let passwordLabel = NSTextField(labelWithString: "")
     private let statusLabel = NSTextField(labelWithString: "")
 
@@ -654,7 +664,7 @@ final class PasswordTextView: NSView {
         wantsLayer = true
         layer?.isOpaque = false
         
-        let labels = [timeLabel, dateLabel, batteryLabel, customMessageLabel, brandingLabel, passwordLabel, statusLabel]
+        let labels = [timeLabel, dateLabel, batteryLabel, customMessageLabel, brandingLabel, mediaLabel, passwordLabel, statusLabel]
         for label in labels {
             label.alignment = .center
             label.drawsBackground = false
@@ -664,7 +674,14 @@ final class PasswordTextView: NSView {
             addSubview(label)
         }
         
+        mediaLabel.isHidden = true
+        
         NotificationCenter.default.addObserver(self, selector: #selector(defaultsChanged), name: UserDefaults.didChangeNotification, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(mediaChanged(_:)), name: NSNotification.Name("MediaStatusChanged"), object: nil)
+        
+        if let status = MediaHelper.shared.currentStatus {
+            NotificationCenter.default.post(name: NSNotification.Name("MediaStatusChanged"), object: nil, userInfo: ["status": status])
+        }
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
@@ -672,6 +689,36 @@ final class PasswordTextView: NSView {
     func forceBatteryUpdate() {
         lastBatteryCheck = Date.distantPast
         updateUI()
+    }
+    
+    @objc private func mediaChanged(_ notification: Notification) {
+        guard let status = notification.userInfo?["status"] as? MediaStatus else { return }
+        if status.isPlaying {
+            let font = NSFont.systemFont(ofSize: 14, weight: .medium)
+            let str = NSMutableAttributedString()
+            
+            if let image = NSImage(systemSymbolName: "music.note", accessibilityDescription: nil) {
+                let config = NSImage.SymbolConfiguration(pointSize: 13, weight: .medium)
+                if let tinted = image.withSymbolConfiguration(config) {
+                    tinted.isTemplate = true
+                    let attachment = NSTextAttachment()
+                    attachment.image = tinted
+                    let imageStr = NSMutableAttributedString(attachment: attachment)
+                    imageStr.addAttributes([.foregroundColor: NSColor(white: 0.8, alpha: 1.0)], range: NSRange(location: 0, length: imageStr.length))
+                    str.append(imageStr)
+                    str.append(NSAttributedString(string: "  ", attributes: [.font: font]))
+                }
+            }
+            
+            let text = status.artist.isEmpty ? status.title : "\(status.title) — \(status.artist)"
+            str.append(NSAttributedString(string: text, attributes: [.font: font, .foregroundColor: NSColor(white: 0.8, alpha: 1.0)]))
+            
+            mediaLabel.attributedStringValue = str
+            mediaLabel.isHidden = false
+        } else {
+            mediaLabel.isHidden = true
+        }
+        needsLayout = true
     }
     
     @objc private func defaultsChanged() {
@@ -830,6 +877,12 @@ final class PasswordTextView: NSView {
         if !customMessageLabel.isHidden {
             customMessageLabel.sizeToFit()
             customMessageLabel.frame = NSRect(x: cx - customMessageLabel.bounds.width / 2, y: widgetY, width: customMessageLabel.bounds.width, height: customMessageLabel.bounds.height)
+            widgetY -= 22
+        }
+        
+        if !mediaLabel.isHidden {
+            mediaLabel.sizeToFit()
+            mediaLabel.frame = NSRect(x: cx - mediaLabel.bounds.width / 2, y: widgetY, width: mediaLabel.bounds.width, height: mediaLabel.bounds.height)
         }
         
         if !brandingLabel.isHidden {

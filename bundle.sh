@@ -63,6 +63,8 @@ cat > "${CONTENTS_DIR}/Info.plist" <<EOF
     <true/>
     <key>NSHighResolutionCapable</key>
     <true/>
+    <key>NSAppleEventsUsageDescription</key>
+    <string>H0Ver needs access to display the currently playing track.</string>
 </dict>
 </plist>
 EOF
