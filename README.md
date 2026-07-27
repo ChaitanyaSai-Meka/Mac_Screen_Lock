@@ -7,14 +7,14 @@ A premium macOS utility that overlays a full-screen video or an animated liquid 
 - **Beautiful Backgrounds**: Choose between a custom looping video (`.mp4`, `.mov`) or a buttery smooth "Liquid Gradient" (powered by CoreAnimation).
 - **Global Hotkey**: Press **`Cmd + Shift + L`** from *anywhere* on your Mac to instantly lock your screen.
 - **Lock Screen Widgets**: Displays a live Battery percentage using native SF Symbols, plus an optional Custom Message right below the clock.
-- **Touch ID Integration**: Press **Return** when the password field is empty to instantly invoke macOS Touch ID to unlock.
+- **Touch ID Integration**: Press **Return** when the password field is empty to instantly invoke macOS Touch ID to unlock. If Touch ID fails or is unavailable, it gracefully falls back to your Mac user password.
 - **Launch at Login**: Automatically start H0Ver securely in the background when you boot your Mac.
-- **Auto-Updates**: Checks the official GitHub repository for new versions on launch or manually via Settings.
+- **Updates**: Manually check the official GitHub repository for new versions via Settings.
 - **Smart Cooldown**: Temporarily locks out intruders with an expanding cooldown timer after consecutive failed attempts.
 
 ## Security Limitation
 
-This is an app-level overlay, **not** a replacement for macOS LoginWindow, FileVault, or the system lock screen. A privileged user or someone with physical access may still bypass or quit the app. Keep normal macOS security enabled.
+**CRITICAL**: This is an app-level overlay, **not** a replacement for macOS LoginWindow, FileVault, or the system lock screen. Because it is an application running in user-space, it cannot provide the deep OS-level guarantees of the real macOS lock screen. A privileged user or someone with physical access may still bypass or force-quit the app under certain conditions. Keep normal macOS security and screen sleep passwords enabled.
 
 ## Installation (Direct Download)
 
@@ -51,7 +51,7 @@ cp -r H0Ver.app /Applications/
 Once launched, H0Ver lives in your menu bar (as a menu bar extra). It does not appear in your Dock.
 
 - **Fastest way to lock:** Press **`Cmd + Shift + L`**.
-- **Menu bar lock:** Click the `H0Ver` menu bar item and select **Lock Now** (or press `L` when the menu is open).
+- **Menu bar lock:** Click the `H0Ver` menu bar item and select **Lock Now** (or press `Cmd + Shift + L`).
 - When unlocked, the lock screen disappears but the app stays running silently in the background.
 
 ## Configuration

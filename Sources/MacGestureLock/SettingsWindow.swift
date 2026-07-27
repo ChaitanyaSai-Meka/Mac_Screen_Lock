@@ -102,6 +102,9 @@ final class SettingsView: NSView {
         
         let videoStack = NSStackView(views: [videoPathField, browseButton])
         videoStack.orientation = .horizontal
+        videoStack.alignment = .firstBaseline
+        videoPathField.usesSingleLineMode = true
+        videoPathField.lineBreakMode = .byTruncatingHead
         videoPathField.placeholderString = "/path/to/video.mp4"
         videoPathField.widthAnchor.constraint(equalToConstant: 240).isActive = true
         browseButton.target = self
@@ -210,9 +213,16 @@ final class SettingsView: NSView {
         saveButton.target = self
         saveButton.action = #selector(save)
         
-        let leftFooterStack = NSStackView(views: [checkUpdatesButton, statusLabel])
+        let versionString = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0"
+        let versionLabel = NSTextField(labelWithString: "v\(versionString)")
+        versionLabel.textColor = .tertiaryLabelColor
+        versionLabel.font = .systemFont(ofSize: 11)
+        versionLabel.setContentCompressionResistancePriority(.defaultHigh, for: .horizontal)
+
+        let leftFooterStack = NSStackView(views: [checkUpdatesButton, versionLabel, statusLabel])
         leftFooterStack.orientation = .horizontal
         leftFooterStack.spacing = 10
+        leftFooterStack.alignment = .firstBaseline
         
         footerStack.addView(leftFooterStack, in: .leading)
         footerStack.addView(saveButton, in: .trailing)
