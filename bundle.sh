@@ -48,9 +48,9 @@ cat > "${CONTENTS_DIR}/Info.plist" <<EOF
     <key>CFBundleIdentifier</key>
     <string>com.h0ver.lockscreen</string>
     <key>CFBundleVersion</key>
-    <string>1.0.3</string>
+    <string>1.1.0</string>
     <key>CFBundleShortVersionString</key>
-    <string>1.0.3</string>
+    <string>1.1.0</string>
     <key>CFBundleIconFile</key>
     <string>AppIcon</string>
     <key>CFBundleExecutable</key>
@@ -63,6 +63,10 @@ cat > "${CONTENTS_DIR}/Info.plist" <<EOF
     <true/>
     <key>NSHighResolutionCapable</key>
     <true/>
+    <key>NSAppleEventsUsageDescription</key>
+    <string>H0Ver needs access to display the currently playing track.</string>
+    <key>NSLocationWhenInUseUsageDescription</key>
+    <string>H0Ver needs your location to display accurate local weather on the lock screen.</string>
 </dict>
 </plist>
 EOF

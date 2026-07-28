@@ -6,6 +6,8 @@ struct Config {
     let appPassword: String
     let maxAttempts: Int
     let lockoutBaseDuration: Int
+    let showBattery: Bool
+    let showWeather: Bool
 
     static func load() -> Config {
         let env = loadDotEnv()
@@ -23,11 +25,18 @@ struct Config {
         let maxAttempts = defaults.integer(forKey: "MaxAttempts")
         let lockoutBase = defaults.integer(forKey: "LockoutDuration")
 
+        defaults.register(defaults: [
+            "ShowBattery": true,
+            "ShowWeather": true
+        ])
+
         return Config(
-            videoPath: path,
+            videoPath: path?.isEmpty == false ? path : nil,
             appPassword: password,
             maxAttempts: maxAttempts > 0 ? maxAttempts : 5,
-            lockoutBaseDuration: lockoutBase > 0 ? lockoutBase : 10
+            lockoutBaseDuration: lockoutBase > 0 ? lockoutBase : 30,
+            showBattery: defaults.bool(forKey: "ShowBattery"),
+            showWeather: defaults.bool(forKey: "ShowWeather")
         )
     }
 
@@ -83,8 +92,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var windows: [NSWindow] = []
     private var statusItem: NSStatusItem?
     private var config = Config.load()
-    private var authenticationInProgress = false
     private var authContext: LAContext?
+    private var authenticationInProgress = false {
+        didSet {
+            if oldValue && !authenticationInProgress {
+                authContext?.invalidate()
+                authContext = nil
+            }
+        }
+    }
     private var keepFrontTimer: Timer?
     private var eventMonitors: [Any] = []
 
@@ -106,8 +122,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         makeMenuBarItem()
         installEventMonitors()
         NotificationCenter.default.addObserver(self, selector: #selector(screensChanged), name: NSApplication.didChangeScreenParametersNotification, object: nil)
+        BatteryHelper.startMonitoring()
+        if UserDefaults.standard.bool(forKey: "ShowWeather") {
+            WeatherHelper.shared.startMonitoring()
+        }
+        NotificationCenter.default.addObserver(self, selector: #selector(batteryStatusChanged), name: NSNotification.Name("BatteryStatusChanged"), object: nil)
+        NSWorkspace.shared.notificationCenter.addObserver(self, selector: #selector(reassertOverlay), name: NSWorkspace.didActivateApplicationNotification, object: nil)
         GlobalHotkeyManager.shared.register()
-        UpdateChecker.check(manual: false)
     }
     
     func lockScreen() {
@@ -134,6 +155,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApplication.shared.terminate(nil)
     }
     @objc private func screensChanged() { if !windows.isEmpty { lock() } }
+    @objc private func batteryStatusChanged() {
+        windows.compactMap { $0.contentView as? LockView }.forEach { $0.forceBatteryUpdate() }
+    }
 
     private func lock() {
         config = Config.load()
@@ -141,6 +165,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         applyLockedPresentationOptions()
         windows.forEach { ($0.contentView as? LockView)?.cleanup(); $0.close() }
         windows = NSScreen.screens.map(makeWindow)
+        MediaHelper.startMonitoring()
+        
+        if lockedOut {
+            windows.compactMap { $0.contentView as? LockView }.forEach { $0.setLockedOut(true) }
+            setStatus("Too many attempts \u{2014} wait \(lockoutRemaining)s", color: NSColor.systemRed)
+        }
+        
         startKeepFrontTimer()
         NSApplication.shared.activate(ignoringOtherApps: true)
         reassertFirstResponder()
@@ -148,7 +179,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func makeWindow(for screen: NSScreen) -> NSWindow {
         let mode = UserDefaults.standard.integer(forKey: "BackgroundMode")
-        let view = LockView(frame: screen.frame, videoURL: videoURL(), backgroundMode: mode)
+        let isPrimary = screen == NSScreen.main
+        let view = LockView(frame: screen.frame, videoURL: videoURL(), backgroundMode: mode, isPrimary: isPrimary)
         view.onAuthenticate = { [weak self] in self?.authenticateWithTouchID() }
         view.onCancelTouchID = { [weak self] in self?.cancelTouchID() }
         view.onPasswordSubmit = { [weak self] password in self?.validate(password: password) }
@@ -173,14 +205,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func startKeepFrontTimer() {
         keepFrontTimer?.invalidate()
-        let timer = Timer(timeInterval: 0.35, repeats: true) { [weak self] _ in
+        let timer = Timer(timeInterval: 2.0, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.reassertOverlay() }
         }
         RunLoop.main.add(timer, forMode: .common)
         keepFrontTimer = timer
     }
-
-    private func reassertOverlay() {
+    
+    @objc private func reassertOverlay() {
         guard !windows.isEmpty else { return }
         for window in windows {
             window.level = .screenSaver
@@ -344,20 +376,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         lockoutTimer = nil
         lockedOut = false
         failedAttempts = 0
+        MediaHelper.stopMonitoring()
+        
+        let unlockingWindows = self.windows
+        self.windows = []
 
         NSAnimationContext.runAnimationGroup({ context in
             context.duration = 0.3
-            for window in self.windows {
+            for window in unlockingWindows {
                 window.animator().alphaValue = 0
             }
         }, completionHandler: {
             DispatchQueue.main.async { [weak self] in
                 guard let self else { return }
-                self.keepFrontTimer?.invalidate()
-                self.keepFrontTimer = nil
-                self.windows.forEach { ($0.contentView as? LockView)?.cleanup(); $0.close() }
-                self.windows = []
-                self.restorePresentationOptions()
+                
+                unlockingWindows.forEach { ($0.contentView as? LockView)?.cleanup(); $0.close() }
+                
+                // Only restore presentation options if we haven't locked again
+                if self.windows.isEmpty {
+                    self.keepFrontTimer?.invalidate()
+                    self.keepFrontTimer = nil
+                    self.restorePresentationOptions()
+                }
             }
         })
     }
@@ -375,12 +415,13 @@ final class LockView: NSView {
     var onEmergencyQuit: (() -> Void)?
     var isLockedOut: (() -> Bool)?
 
-    private var player: AVPlayer?
+    private var player: AVQueuePlayer?
+    private var looper: AVPlayerLooper?
     private var playerLayer: AVPlayerLayer?
     private var hasVideo = false
     private let overlayView: OverlayView
 
-    init(frame frameRect: NSRect, videoURL: URL?, backgroundMode: Int = 0) {
+    init(frame frameRect: NSRect, videoURL: URL?, backgroundMode: Int = 0, isPrimary: Bool = true) {
         overlayView = OverlayView(frame: NSRect(origin: .zero, size: frameRect.size))
         super.init(frame: frameRect)
         wantsLayer = true
@@ -391,27 +432,25 @@ final class LockView: NSView {
             addSubview(gradientView)
             self.hasVideo = true
         } else if let videoURL {
-            let player = AVPlayer(url: videoURL)
-            player.isMuted = false
-            player.actionAtItemEnd = .none
-            let layer = AVPlayerLayer(player: player)
+            let item = AVPlayerItem(url: videoURL)
+            let queuePlayer = AVQueuePlayer(playerItem: item)
+            queuePlayer.isMuted = !isPrimary
+            
+            let looper = AVPlayerLooper(player: queuePlayer, templateItem: item)
+            
+            let layer = AVPlayerLayer(player: queuePlayer)
             layer.videoGravity = .resizeAspectFill
             self.layer?.addSublayer(layer)
-            self.player = player
+            self.player = queuePlayer
+            self.looper = looper
             self.playerLayer = layer
             self.hasVideo = true
-            NotificationCenter.default.addObserver(self, selector: #selector(playerDidFinishPlaying), name: .AVPlayerItemDidPlayToEndTime, object: player.currentItem)
-            player.play()
+            queuePlayer.play()
         }
 
         overlayView.autoresizingMask = [.width, .height]
         overlayView.hasVideo = hasVideo
         addSubview(overlayView)
-    }
-
-    @objc private func playerDidFinishPlaying() {
-        player?.seek(to: .zero)
-        player?.play()
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
@@ -432,6 +471,10 @@ final class LockView: NSView {
     override func draw(_ dirtyRect: NSRect) {
         NSColor.black.setFill()
         bounds.fill()
+    }
+    
+    func forceBatteryUpdate() {
+        overlayView.forceBatteryUpdate()
     }
 
     override func keyDown(with event: NSEvent) {
@@ -463,8 +506,9 @@ final class LockView: NSView {
                   !modifiers.contains(.command), !modifiers.contains(.control) {
             onCancelTouchID?()
             overlayView.escapeCount = 0
-            if overlayView.passwordBuffer.count < 128 {
-                overlayView.passwordBuffer.append(contentsOf: chars)
+            let remaining = 128 - overlayView.passwordBuffer.count
+            if remaining > 0 {
+                overlayView.passwordBuffer.append(contentsOf: chars.prefix(remaining))
             }
             overlayView.isFocused = true
             setStatus("", color: .white)
@@ -572,6 +616,10 @@ final class OverlayView: NSView {
         glassView.frame = glassFrame
     }
 
+    func forceBatteryUpdate() {
+        textLayer.forceBatteryUpdate()
+    }
+
     private func updateGlassBorder() {
         if isLockedOut {
             glassView.layer?.borderColor = NSColor.systemRed.withAlphaComponent(0.5).cgColor
@@ -610,12 +658,18 @@ final class PasswordTextView: NSView {
     
     private var lastBatteryCheck = Date.distantPast
     private var cachedBattery: BatteryStatus?
+    private let timeFont = NSFont.systemFont(ofSize: 84, weight: .thin)
+    private let periodFont = NSFont.systemFont(ofSize: 24, weight: .light)
+    private let dateFont = NSFont.systemFont(ofSize: 20, weight: .regular)
+    private let batteryFont = NSFont.systemFont(ofSize: 14, weight: .medium)
     
     private let timeLabel = NSTextField(labelWithString: "")
     private let dateLabel = NSTextField(labelWithString: "")
     private let batteryLabel = NSTextField(labelWithString: "")
+    private let weatherLabel = NSTextField(labelWithString: "")
     private let customMessageLabel = NSTextField(labelWithString: "")
     private let brandingLabel = NSTextField(labelWithString: "")
+    private let mediaLabel = NSTextField(labelWithString: "")
     private let passwordLabel = NSTextField(labelWithString: "")
     private let statusLabel = NSTextField(labelWithString: "")
 
@@ -624,7 +678,7 @@ final class PasswordTextView: NSView {
         wantsLayer = true
         layer?.isOpaque = false
         
-        let labels = [timeLabel, dateLabel, batteryLabel, customMessageLabel, brandingLabel, passwordLabel, statusLabel]
+        let labels = [timeLabel, dateLabel, batteryLabel, weatherLabel, customMessageLabel, brandingLabel, mediaLabel, passwordLabel, statusLabel]
         for label in labels {
             label.alignment = .center
             label.drawsBackground = false
@@ -634,13 +688,100 @@ final class PasswordTextView: NSView {
             addSubview(label)
         }
         
+        mediaLabel.isHidden = true
+        
         NotificationCenter.default.addObserver(self, selector: #selector(defaultsChanged), name: UserDefaults.didChangeNotification, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(mediaChanged(_:)), name: NSNotification.Name("MediaStatusChanged"), object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(weatherChanged(_:)), name: NSNotification.Name("WeatherStatusChanged"), object: nil)
+        
+        if let status = MediaHelper.shared.currentStatus {
+            NotificationCenter.default.post(name: NSNotification.Name("MediaStatusChanged"), object: nil, userInfo: ["status": status])
+        }
+        
+        if let status = WeatherHelper.shared.currentStatus {
+            NotificationCenter.default.post(name: NSNotification.Name("WeatherStatusChanged"), object: nil, userInfo: ["status": status])
+        }
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
     
+    func forceBatteryUpdate() {
+        lastBatteryCheck = Date.distantPast
+        updateUI()
+    }
+    
+    @objc private func mediaChanged(_ notification: Notification) {
+        guard let status = notification.userInfo?["status"] as? MediaStatus else { return }
+        if status.isPlaying {
+            let font = NSFont.systemFont(ofSize: 14, weight: .medium)
+            let str = NSMutableAttributedString()
+            
+            if let image = NSImage(systemSymbolName: "music.note", accessibilityDescription: nil) {
+                let config = NSImage.SymbolConfiguration(pointSize: 13, weight: .medium)
+                if let tinted = image.withSymbolConfiguration(config) {
+                    tinted.isTemplate = true
+                    let attachment = NSTextAttachment()
+                    attachment.image = tinted
+                    let imageStr = NSMutableAttributedString(attachment: attachment)
+                    imageStr.addAttributes([.foregroundColor: NSColor(white: 0.8, alpha: 1.0)], range: NSRange(location: 0, length: imageStr.length))
+                    str.append(imageStr)
+                    str.append(NSAttributedString(string: "  ", attributes: [.font: font]))
+                }
+            }
+            
+            let text = status.artist.isEmpty ? status.title : "\(status.title) — \(status.artist)"
+            str.append(NSAttributedString(string: text, attributes: [.font: font, .foregroundColor: NSColor(white: 0.8, alpha: 1.0)]))
+            
+            mediaLabel.attributedStringValue = str
+            mediaLabel.isHidden = false
+        } else {
+            mediaLabel.isHidden = true
+        }
+        needsLayout = true
+    }
+    
+    @objc private func weatherChanged(_ notification: Notification) {
+        let showWeather = UserDefaults.standard.bool(forKey: "ShowWeather")
+        guard showWeather, let status = notification.userInfo?["status"] as? WeatherStatus else {
+            weatherLabel.isHidden = true
+            needsLayout = true
+            return
+        }
+        
+        let font = NSFont.systemFont(ofSize: 14, weight: .medium)
+        let str = NSMutableAttributedString()
+        
+        if let image = NSImage(systemSymbolName: status.symbol, accessibilityDescription: nil) {
+            let config = NSImage.SymbolConfiguration(pointSize: 13, weight: .medium)
+            if let tinted = image.withSymbolConfiguration(config) {
+                tinted.isTemplate = true
+                let attachment = NSTextAttachment()
+                attachment.image = tinted
+                let imageStr = NSMutableAttributedString(attachment: attachment)
+                imageStr.addAttributes([.foregroundColor: NSColor(white: 0.8, alpha: 1.0)], range: NSRange(location: 0, length: imageStr.length))
+                str.append(imageStr)
+                str.append(NSAttributedString(string: "  ", attributes: [.font: font]))
+            }
+        }
+        
+        let tempStr = String(format: "%.1f°C", status.temperature)
+        let text = "\(tempStr) — \(status.city)"
+        str.append(NSAttributedString(string: text, attributes: [.font: font, .foregroundColor: NSColor(white: 0.8, alpha: 1.0)]))
+        
+        weatherLabel.attributedStringValue = str
+        weatherLabel.isHidden = false
+        needsLayout = true
+    }
+    
     @objc private func defaultsChanged() {
         cachedBrandingTextNeedsUpdate = true
+        lastBatteryCheck = .distantPast
+        if UserDefaults.standard.bool(forKey: "ShowWeather") {
+            WeatherHelper.shared.startMonitoring()
+        } else {
+            WeatherHelper.shared.stopMonitoring()
+        }
+        updateUI()
     }
     
     func updateUI() {
@@ -666,14 +807,12 @@ final class PasswordTextView: NSView {
         let period = use24Hour ? "" : (" " + Self.periodFormatter.string(from: now))
         let date = Self.dateFormatter.string(from: now)
 
-        let timeFont = NSFont.systemFont(ofSize: 84, weight: .thin)
         let clockStr = NSMutableAttributedString(
             string: time,
             attributes: [.font: timeFont, .foregroundColor: NSColor.white]
         )
         
         if !use24Hour {
-            let periodFont = NSFont.systemFont(ofSize: 24, weight: .light)
             clockStr.append(NSAttributedString(
                 string: period,
                 attributes: [.font: periodFont, .foregroundColor: NSColor(white: 0.6, alpha: 1.0)]
@@ -682,7 +821,7 @@ final class PasswordTextView: NSView {
         timeLabel.attributedStringValue = clockStr
 
         if showDate {
-            dateLabel.font = NSFont.systemFont(ofSize: 20, weight: .regular)
+            dateLabel.font = dateFont
             dateLabel.textColor = NSColor(white: 0.6, alpha: 1.0)
             dateLabel.stringValue = date
             dateLabel.isHidden = false
@@ -693,13 +832,13 @@ final class PasswordTextView: NSView {
         if now.timeIntervalSince(lastBatteryCheck) > 60 || cachedBattery == nil {
             lastBatteryCheck = now
             cachedBattery = BatteryHelper.getStatus()
+            let showBattery = defaults.bool(forKey: "ShowBattery")
             
-            if let batt = cachedBattery {
-                let font = NSFont.systemFont(ofSize: 14, weight: .medium)
+            if let batt = cachedBattery, showBattery {
                 let color = NSColor(white: 0.8, alpha: 1.0)
                 let str = NSMutableAttributedString()
                 
-                let symbolName = batt.isCharging ? "battery.100.bolt" : (batt.percentage <= 20 ? "battery.25" : "battery.100")
+                let symbolName = batt.isPluggedIn ? "battery.100.bolt" : (batt.percentage <= 20 ? "battery.25" : "battery.100")
                 if let image = NSImage(systemSymbolName: symbolName, accessibilityDescription: nil) {
                     let config = NSImage.SymbolConfiguration(pointSize: 13, weight: .medium)
                     if let tinted = image.withSymbolConfiguration(config) {
@@ -711,11 +850,11 @@ final class PasswordTextView: NSView {
                         let imageStr = NSMutableAttributedString(attachment: attachment)
                         imageStr.addAttributes([.foregroundColor: color], range: NSRange(location: 0, length: imageStr.length))
                         str.append(imageStr)
-                        str.append(NSAttributedString(string: " ", attributes: [.font: font]))
+                        str.append(NSAttributedString(string: " ", attributes: [.font: batteryFont]))
                     }
                 }
                 
-                str.append(NSAttributedString(string: "\(batt.percentage)%", attributes: [.font: font, .foregroundColor: color]))
+                str.append(NSAttributedString(string: "\(batt.percentage)%", attributes: [.font: batteryFont, .foregroundColor: color]))
                 batteryLabel.attributedStringValue = str
                 batteryLabel.isHidden = false
             } else {
@@ -795,9 +934,21 @@ final class PasswordTextView: NSView {
             widgetY -= 22
         }
         
+        if !weatherLabel.isHidden {
+            weatherLabel.sizeToFit()
+            weatherLabel.frame = NSRect(x: cx - weatherLabel.bounds.width / 2, y: widgetY, width: weatherLabel.bounds.width, height: weatherLabel.bounds.height)
+            widgetY -= 22
+        }
+        
         if !customMessageLabel.isHidden {
             customMessageLabel.sizeToFit()
             customMessageLabel.frame = NSRect(x: cx - customMessageLabel.bounds.width / 2, y: widgetY, width: customMessageLabel.bounds.width, height: customMessageLabel.bounds.height)
+            widgetY -= 22
+        }
+        
+        if !mediaLabel.isHidden {
+            mediaLabel.sizeToFit()
+            mediaLabel.frame = NSRect(x: cx - mediaLabel.bounds.width / 2, y: widgetY, width: mediaLabel.bounds.width, height: mediaLabel.bounds.height)
         }
         
         if !brandingLabel.isHidden {
