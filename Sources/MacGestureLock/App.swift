@@ -6,6 +6,8 @@ struct Config {
     let appPassword: String
     let maxAttempts: Int
     let lockoutBaseDuration: Int
+    let showBattery: Bool
+    let showWeather: Bool
 
     static func load() -> Config {
         let env = loadDotEnv()
@@ -23,11 +25,18 @@ struct Config {
         let maxAttempts = defaults.integer(forKey: "MaxAttempts")
         let lockoutBase = defaults.integer(forKey: "LockoutDuration")
 
+        defaults.register(defaults: [
+            "ShowBattery": true,
+            "ShowWeather": true
+        ])
+
         return Config(
-            videoPath: path,
+            videoPath: path?.isEmpty == false ? path : nil,
             appPassword: password,
-            maxAttempts: maxAttempts > 0 ? maxAttempts : 5,
-            lockoutBaseDuration: lockoutBase > 0 ? lockoutBase : 10
+            maxAttempts: maxAttempts == 0 ? 5 : maxAttempts,
+            lockoutBaseDuration: lockoutBase == 0 ? 30 : lockoutBase,
+            showBattery: defaults.bool(forKey: "ShowBattery"),
+            showWeather: defaults.bool(forKey: "ShowWeather")
         )
     }
 
@@ -114,6 +123,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         installEventMonitors()
         NotificationCenter.default.addObserver(self, selector: #selector(screensChanged), name: NSApplication.didChangeScreenParametersNotification, object: nil)
         BatteryHelper.startMonitoring()
+        WeatherHelper.shared.startMonitoring()
         NotificationCenter.default.addObserver(self, selector: #selector(batteryStatusChanged), name: NSNotification.Name("BatteryStatusChanged"), object: nil)
         MediaHelper.startMonitoring()
         NSWorkspace.shared.notificationCenter.addObserver(self, selector: #selector(reassertOverlay), name: NSWorkspace.didActivateApplicationNotification, object: nil)
@@ -653,6 +663,7 @@ final class PasswordTextView: NSView {
     private let timeLabel = NSTextField(labelWithString: "")
     private let dateLabel = NSTextField(labelWithString: "")
     private let batteryLabel = NSTextField(labelWithString: "")
+    private let weatherLabel = NSTextField(labelWithString: "")
     private let customMessageLabel = NSTextField(labelWithString: "")
     private let brandingLabel = NSTextField(labelWithString: "")
     private let mediaLabel = NSTextField(labelWithString: "")
@@ -664,7 +675,7 @@ final class PasswordTextView: NSView {
         wantsLayer = true
         layer?.isOpaque = false
         
-        let labels = [timeLabel, dateLabel, batteryLabel, customMessageLabel, brandingLabel, mediaLabel, passwordLabel, statusLabel]
+        let labels = [timeLabel, dateLabel, batteryLabel, weatherLabel, customMessageLabel, brandingLabel, mediaLabel, passwordLabel, statusLabel]
         for label in labels {
             label.alignment = .center
             label.drawsBackground = false
@@ -678,9 +689,14 @@ final class PasswordTextView: NSView {
         
         NotificationCenter.default.addObserver(self, selector: #selector(defaultsChanged), name: UserDefaults.didChangeNotification, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(mediaChanged(_:)), name: NSNotification.Name("MediaStatusChanged"), object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(weatherChanged(_:)), name: NSNotification.Name("WeatherStatusChanged"), object: nil)
         
         if let status = MediaHelper.shared.currentStatus {
             NotificationCenter.default.post(name: NSNotification.Name("MediaStatusChanged"), object: nil, userInfo: ["status": status])
+        }
+        
+        if let status = WeatherHelper.shared.currentStatus {
+            NotificationCenter.default.post(name: NSNotification.Name("WeatherStatusChanged"), object: nil, userInfo: ["status": status])
         }
     }
 
@@ -718,6 +734,39 @@ final class PasswordTextView: NSView {
         } else {
             mediaLabel.isHidden = true
         }
+        needsLayout = true
+    }
+    
+    @objc private func weatherChanged(_ notification: Notification) {
+        let showWeather = UserDefaults.standard.bool(forKey: "ShowWeather")
+        guard showWeather, let status = notification.userInfo?["status"] as? WeatherStatus else {
+            weatherLabel.isHidden = true
+            needsLayout = true
+            return
+        }
+        
+        let font = NSFont.systemFont(ofSize: 14, weight: .medium)
+        let str = NSMutableAttributedString()
+        
+        if let image = NSImage(systemSymbolName: status.symbol, accessibilityDescription: nil) {
+            let config = NSImage.SymbolConfiguration(pointSize: 13, weight: .medium)
+            if let tinted = image.withSymbolConfiguration(config) {
+                tinted.isTemplate = true
+                let attachment = NSTextAttachment()
+                attachment.image = tinted
+                let imageStr = NSMutableAttributedString(attachment: attachment)
+                imageStr.addAttributes([.foregroundColor: NSColor(white: 0.8, alpha: 1.0)], range: NSRange(location: 0, length: imageStr.length))
+                str.append(imageStr)
+                str.append(NSAttributedString(string: "  ", attributes: [.font: font]))
+            }
+        }
+        
+        let tempStr = String(format: "%.1f°C", status.temperature)
+        let text = "\(tempStr) — \(status.city)"
+        str.append(NSAttributedString(string: text, attributes: [.font: font, .foregroundColor: NSColor(white: 0.8, alpha: 1.0)]))
+        
+        weatherLabel.attributedStringValue = str
+        weatherLabel.isHidden = false
         needsLayout = true
     }
     
@@ -773,8 +822,9 @@ final class PasswordTextView: NSView {
         if now.timeIntervalSince(lastBatteryCheck) > 60 || cachedBattery == nil {
             lastBatteryCheck = now
             cachedBattery = BatteryHelper.getStatus()
+            let showBattery = defaults.bool(forKey: "ShowBattery")
             
-            if let batt = cachedBattery {
+            if let batt = cachedBattery, showBattery {
                 let color = NSColor(white: 0.8, alpha: 1.0)
                 let str = NSMutableAttributedString()
                 
@@ -871,6 +921,12 @@ final class PasswordTextView: NSView {
         if !batteryLabel.isHidden {
             batteryLabel.sizeToFit()
             batteryLabel.frame = NSRect(x: cx - batteryLabel.bounds.width / 2, y: widgetY, width: batteryLabel.bounds.width, height: batteryLabel.bounds.height)
+            widgetY -= 22
+        }
+        
+        if !weatherLabel.isHidden {
+            weatherLabel.sizeToFit()
+            weatherLabel.frame = NSRect(x: cx - weatherLabel.bounds.width / 2, y: widgetY, width: weatherLabel.bounds.width, height: weatherLabel.bounds.height)
             widgetY -= 22
         }
         

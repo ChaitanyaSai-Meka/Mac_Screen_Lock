@@ -2,7 +2,7 @@
 
 A premium macOS utility that overlays a full-screen video or an animated liquid gradient screensaver, unlockable via an in-app password or native Touch ID. The lock screen features a beautiful frosted-glass (liquid glass) password field, a live clock, and native lock screen widgets.
 
-## Features ✨
+## Features
 
 - **Beautiful Backgrounds**: Choose between a custom looping video (`.mp4`, `.mov`) or a buttery smooth "Liquid Gradient" (powered by CoreAnimation).
 - **Global Hotkey**: Press **`Cmd + Shift + L`** from *anywhere* on your Mac to instantly lock your screen.

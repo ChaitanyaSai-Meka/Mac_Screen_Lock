@@ -66,6 +66,8 @@ final class SettingsView: NSView {
     private let clock24HourCheckbox = NSButton(checkboxWithTitle: "Use 24-hour time format", target: nil, action: nil)
     private let clockSecondsCheckbox = NSButton(checkboxWithTitle: "Show seconds", target: nil, action: nil)
     private let clockDateCheckbox = NSButton(checkboxWithTitle: "Show date", target: nil, action: nil)
+    private let showBatteryCheckbox = NSButton(checkboxWithTitle: "Show battery status", target: nil, action: nil)
+    private let showWeatherCheckbox = NSButton(checkboxWithTitle: "Show weather widget", target: nil, action: nil)
     
     private let brandingField = NSTextField()
     private let customMessageField = NSTextField()
@@ -176,7 +178,7 @@ final class SettingsView: NSView {
 
         mainStack.addArrangedSubview(makeSectionTitle("Clock & Appearance"))
         
-        let clockStack = NSStackView(views: [clock24HourCheckbox, clockSecondsCheckbox, clockDateCheckbox])
+        let clockStack = NSStackView(views: [clock24HourCheckbox, clockSecondsCheckbox, clockDateCheckbox, showBatteryCheckbox, showWeatherCheckbox])
         clockStack.orientation = .vertical
         clockStack.alignment = .leading
         
@@ -308,6 +310,8 @@ final class SettingsView: NSView {
         backgroundModePopup.selectItem(at: (mode >= 0 && mode < 2) ? mode : 0)
         
         clockDateCheckbox.state = defaults.bool(forKey: "ClockShowDate") ? .on : .off
+        showBatteryCheckbox.state = defaults.bool(forKey: "ShowBattery") ? .on : .off
+        showWeatherCheckbox.state = defaults.bool(forKey: "ShowWeather") ? .on : .off
         brandingField.stringValue = defaults.string(forKey: "BrandingText") ?? "H0Ver"
         customMessageField.stringValue = defaults.string(forKey: "CustomMessage") ?? ""
     }
@@ -372,6 +376,8 @@ final class SettingsView: NSView {
         defaults.set(clock24HourCheckbox.state == .on, forKey: "ClockUse24Hour")
         defaults.set(clockSecondsCheckbox.state == .on, forKey: "ClockShowSeconds")
         defaults.set(clockDateCheckbox.state == .on, forKey: "ClockShowDate")
+        defaults.set(showBatteryCheckbox.state == .on, forKey: "ShowBattery")
+        defaults.set(showWeatherCheckbox.state == .on, forKey: "ShowWeather")
         
         let text = brandingField.stringValue.trimmingCharacters(in: .whitespaces)
         defaults.set(text.isEmpty ? "H0Ver" : text, forKey: "BrandingText")

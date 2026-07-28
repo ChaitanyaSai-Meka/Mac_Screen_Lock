@@ -63,8 +63,15 @@ cat > "${CONTENTS_DIR}/Info.plist" <<EOF
     <true/>
     <key>NSHighResolutionCapable</key>
     <true/>
+    <key>NSAppTransportSecurity</key>
+    <dict>
+        <key>NSAllowsArbitraryLoads</key>
+        <true/>
+    </dict>
     <key>NSAppleEventsUsageDescription</key>
     <string>H0Ver needs access to display the currently playing track.</string>
+    <key>NSLocationUsageDescription</key>
+    <string>H0Ver needs your location to display accurate local weather on the lock screen.</string>
 </dict>
 </plist>
 EOF
