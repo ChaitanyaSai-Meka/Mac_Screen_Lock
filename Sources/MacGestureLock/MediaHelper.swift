@@ -23,9 +23,18 @@ final class MediaHelper {
         shared.launchSidecar()
     }
     
+    static func stopMonitoring() {
+        guard shared.isMonitoring else { return }
+        shared.isMonitoring = false
+        shared.process?.terminate()
+        shared.process = nil
+    }
+    
     private func launchSidecar() {
         let script = """
         import Foundation
+        import Dispatch
+        import Darwin
 
         let handle = dlopen("/System/Library/PrivateFrameworks/MediaRemote.framework/MediaRemote", RTLD_LAZY)
         guard handle != nil else { exit(1) }
@@ -75,7 +84,7 @@ final class MediaHelper {
                     let title = parts.first ?? ""
                     let artist = parts.count > 1 ? parts[1] : ""
                     
-                    DispatchQueue.main.async {
+                    Task { @MainActor in
                         let isPlaying = !title.isEmpty
                         let status = MediaStatus(title: title, artist: artist, isPlaying: isPlaying)
                         self.currentStatus = status
@@ -86,7 +95,7 @@ final class MediaHelper {
             
             do {
                 try process.run()
-                DispatchQueue.main.async {
+                Task { @MainActor in
                     self.process = process
                 }
                 process.waitUntilExit()

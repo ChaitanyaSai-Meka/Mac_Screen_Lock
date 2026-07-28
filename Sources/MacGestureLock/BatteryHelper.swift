@@ -3,7 +3,7 @@ import IOKit.ps
 
 struct BatteryStatus {
     var percentage: Int
-    var isCharging: Bool
+    var isPluggedIn: Bool
 }
 
 final class BatteryHelper {
@@ -22,7 +22,7 @@ final class BatteryHelper {
         let state = info[kIOPSPowerSourceStateKey] as? String ?? ""
         let isPluggedIn = (state == kIOPSACPowerValue)
         
-        return BatteryStatus(percentage: percentage, isCharging: isPluggedIn)
+        return BatteryStatus(percentage: percentage, isPluggedIn: isPluggedIn)
     }
     
     static func startMonitoring() {

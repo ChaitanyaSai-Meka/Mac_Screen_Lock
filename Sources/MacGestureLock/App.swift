@@ -123,9 +123,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         installEventMonitors()
         NotificationCenter.default.addObserver(self, selector: #selector(screensChanged), name: NSApplication.didChangeScreenParametersNotification, object: nil)
         BatteryHelper.startMonitoring()
-        WeatherHelper.shared.startMonitoring()
+        if UserDefaults.standard.bool(forKey: "ShowWeather") {
+            WeatherHelper.shared.startMonitoring()
+        }
         NotificationCenter.default.addObserver(self, selector: #selector(batteryStatusChanged), name: NSNotification.Name("BatteryStatusChanged"), object: nil)
-        MediaHelper.startMonitoring()
         NSWorkspace.shared.notificationCenter.addObserver(self, selector: #selector(reassertOverlay), name: NSWorkspace.didActivateApplicationNotification, object: nil)
         GlobalHotkeyManager.shared.register()
     }
@@ -164,6 +165,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         applyLockedPresentationOptions()
         windows.forEach { ($0.contentView as? LockView)?.cleanup(); $0.close() }
         windows = NSScreen.screens.map(makeWindow)
+        MediaHelper.startMonitoring()
         
         if lockedOut {
             windows.compactMap { $0.contentView as? LockView }.forEach { $0.setLockedOut(true) }
@@ -374,6 +376,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         lockoutTimer = nil
         lockedOut = false
         failedAttempts = 0
+        MediaHelper.stopMonitoring()
         
         let unlockingWindows = self.windows
         self.windows = []
@@ -772,6 +775,8 @@ final class PasswordTextView: NSView {
     
     @objc private func defaultsChanged() {
         cachedBrandingTextNeedsUpdate = true
+        lastBatteryCheck = .distantPast
+        updateUI()
     }
     
     func updateUI() {
@@ -828,7 +833,7 @@ final class PasswordTextView: NSView {
                 let color = NSColor(white: 0.8, alpha: 1.0)
                 let str = NSMutableAttributedString()
                 
-                let symbolName = batt.isCharging ? "battery.100.bolt" : (batt.percentage <= 20 ? "battery.25" : "battery.100")
+                let symbolName = batt.isPluggedIn ? "battery.100.bolt" : (batt.percentage <= 20 ? "battery.25" : "battery.100")
                 if let image = NSImage(systemSymbolName: symbolName, accessibilityDescription: nil) {
                     let config = NSImage.SymbolConfiguration(pointSize: 13, weight: .medium)
                     if let tinted = image.withSymbolConfiguration(config) {
