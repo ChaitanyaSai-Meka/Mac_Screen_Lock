@@ -33,8 +33,8 @@ struct Config {
         return Config(
             videoPath: path?.isEmpty == false ? path : nil,
             appPassword: password,
-            maxAttempts: maxAttempts == 0 ? 5 : maxAttempts,
-            lockoutBaseDuration: lockoutBase == 0 ? 30 : lockoutBase,
+            maxAttempts: maxAttempts > 0 ? maxAttempts : 5,
+            lockoutBaseDuration: lockoutBase > 0 ? lockoutBase : 30,
             showBattery: defaults.bool(forKey: "ShowBattery"),
             showWeather: defaults.bool(forKey: "ShowWeather")
         )
@@ -776,6 +776,11 @@ final class PasswordTextView: NSView {
     @objc private func defaultsChanged() {
         cachedBrandingTextNeedsUpdate = true
         lastBatteryCheck = .distantPast
+        if UserDefaults.standard.bool(forKey: "ShowWeather") {
+            WeatherHelper.shared.startMonitoring()
+        } else {
+            WeatherHelper.shared.stopMonitoring()
+        }
         updateUI()
     }
     

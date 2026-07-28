@@ -60,6 +60,14 @@ final class WeatherHelper: NSObject, CLLocationManagerDelegate {
         }
     }
     
+    func stopMonitoring() {
+        guard isMonitoring else { return }
+        isMonitoring = false
+        timer?.invalidate()
+        timer = nil
+        locationManager.stopUpdatingLocation()
+    }
+    
     private func requestLocationUpdate() {
         let authStatus = locationManager.authorizationStatus
         if authStatus == .authorizedAlways {
