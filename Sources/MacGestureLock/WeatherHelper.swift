@@ -48,7 +48,7 @@ final class WeatherHelper: NSObject, CLLocationManagerDelegate {
         if authStatus == .notDetermined {
             locationManager.requestAlwaysAuthorization()
         } else if authStatus == .authorizedAlways {
-            locationManager.requestLocation()
+            locationManager.startUpdatingLocation()
         } else {
             NSLog("WeatherHelper: Location access denied.")
         }
@@ -63,7 +63,7 @@ final class WeatherHelper: NSObject, CLLocationManagerDelegate {
     private func requestLocationUpdate() {
         let authStatus = locationManager.authorizationStatus
         if authStatus == .authorizedAlways {
-            locationManager.requestLocation()
+            locationManager.startUpdatingLocation()
         }
     }
     
@@ -71,12 +71,13 @@ final class WeatherHelper: NSObject, CLLocationManagerDelegate {
         let status = manager.authorizationStatus
         Task { @MainActor in
             if status == .authorizedAlways {
-                self.locationManager.requestLocation()
+                self.locationManager.startUpdatingLocation()
             }
         }
     }
     
     nonisolated func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
+        manager.stopUpdatingLocation()
         guard let location = locations.last else { return }
         
         Task { @MainActor in

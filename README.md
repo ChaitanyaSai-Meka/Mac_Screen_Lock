@@ -6,7 +6,8 @@ A premium macOS utility that overlays a full-screen video or an animated liquid 
 
 - **Beautiful Backgrounds**: Choose between a custom looping video (`.mp4`, `.mov`) or a buttery smooth "Liquid Gradient" (powered by CoreAnimation).
 - **Global Hotkey**: Press **`Cmd + Shift + L`** from *anywhere* on your Mac to instantly lock your screen.
-- **Lock Screen Widgets**: Displays a live Battery percentage using native SF Symbols, plus an optional Custom Message right below the clock.
+- **Lock Screen Widgets**: Displays live widgets including Battery percentage, Weather condition with accurate temperature (powered by CoreLocation and Open-Meteo), and currently playing Media (Apple Music/Spotify).
+- **Custom Widget**: Display an optional Custom Message right below the clock.
 - **Touch ID Integration**: Press **Return** when the password field is empty to instantly invoke macOS Touch ID to unlock. If Touch ID fails or is unavailable, it gracefully falls back to your Mac user password.
 - **Launch at Login**: Automatically start H0Ver securely in the background when you boot your Mac.
 - **Updates**: Manually check the official GitHub repository for new versions via Settings.
